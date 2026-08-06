@@ -18,6 +18,10 @@ import { sortMeetingsByCountdown } from '../../hooks/useCountdown';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
+const meetingsSignature = (list) => (list || [])
+  .map((m) => `${m.id}:${m.status}:${m.scheduled_time}`)
+  .join('|');
+
 const Conferences = () => {
   const { user } = useSelector((state) => state.auth);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
@@ -44,18 +48,23 @@ const Conferences = () => {
     [todayMeetings, sortTick]
   );
 
-  const fetchToday = useCallback(async () => {
-    setLoadingToday(true);
+  const fetchToday = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoadingToday(true);
     try {
       const { data } = await api.get('/conferences/today', {
-        params: { _ts: Date.now() },
-        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        ...(silent ? {} : {
+          params: { _ts: Date.now() },
+          headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        }),
       });
-      setTodayMeetings(data.data ?? []);
+      const next = data.data ?? [];
+      setTodayMeetings((prev) => (
+        silent && meetingsSignature(prev) === meetingsSignature(next) ? prev : next
+      ));
     } catch {
-      toast.error('Failed to load today\'s meetings');
+      if (!silent) toast.error('Failed to load today\'s meetings');
     } finally {
-      setLoadingToday(false);
+      if (!silent) setLoadingToday(false);
     }
   }, []);
 
@@ -77,7 +86,7 @@ const Conferences = () => {
   }, [search, statusFilter, page, rowsPerPage]);
 
   const refreshAll = useCallback(() => {
-    fetchToday();
+    fetchToday({ silent: true });
     fetchData();
   }, [fetchToday, fetchData]);
 
@@ -87,7 +96,7 @@ const Conferences = () => {
   }, [fetchData, fetchToday]);
 
   useEffect(() => {
-    const poll = setInterval(fetchToday, 15000);
+    const poll = setInterval(() => fetchToday({ silent: true }), 30000);
     return () => clearInterval(poll);
   }, [fetchToday]);
 

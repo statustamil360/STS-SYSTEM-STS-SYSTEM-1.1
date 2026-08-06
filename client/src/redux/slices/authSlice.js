@@ -18,14 +18,17 @@ export const login = createAsyncThunk('auth/login', async (credentials, { reject
   }
 });
 
-export const fetchProfile = createAsyncThunk('auth/fetchProfile', async (_, { rejectWithValue }) => {
-  try {
-    const { data } = await api.get('/auth/me');
-    return data.data;
-  } catch (err) {
-    return rejectWithValue(err.response?.data?.message);
+export const fetchProfile = createAsyncThunk(
+  'auth/fetchProfile',
+  async (_opts = {}, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get('/auth/me');
+      return data.data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message);
+    }
   }
-});
+);
 
 export const logout = createAsyncThunk('auth/logout', async () => {
   try { await api.post('/auth/logout'); } catch { /* ignore */ }
@@ -66,8 +69,10 @@ const authSlice = createSlice({
         state.loading = false;
         state.error = action.payload;
       })
-      .addCase(fetchProfile.pending, (state) => {
-        state.profileLoading = true;
+      .addCase(fetchProfile.pending, (state, action) => {
+        if (!action.meta.arg?.silent) {
+          state.profileLoading = true;
+        }
         state.profileError = null;
       })
       .addCase(fetchProfile.fulfilled, (state, action) => {
@@ -83,7 +88,9 @@ const authSlice = createSlice({
         state.isAuthenticated = true;
       })
       .addCase(fetchProfile.rejected, (state, action) => {
-        state.profileLoading = false;
+        if (!action.meta.arg?.silent) {
+          state.profileLoading = false;
+        }
         state.profileError = action.payload || 'Session expired';
         state.user = null;
         state.isAuthenticated = false;

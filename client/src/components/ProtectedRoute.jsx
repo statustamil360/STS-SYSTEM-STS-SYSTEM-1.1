@@ -11,7 +11,7 @@ const ProtectedRoute = ({ allowedRoles }) => {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  if (profileLoading) {
+  if (profileLoading && !user) {
     return (
       <Box
         sx={{
