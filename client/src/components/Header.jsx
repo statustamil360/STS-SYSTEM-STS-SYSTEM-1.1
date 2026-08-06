@@ -54,7 +54,7 @@ const Header = ({ onMobileMenuOpen }) => {
         .catch(() => {});
     };
     fetchUnread();
-    const timer = setInterval(fetchUnread, 15000);
+    const timer = setInterval(fetchUnread, 30000);
     return () => clearInterval(timer);
   }, [location.pathname]);
 

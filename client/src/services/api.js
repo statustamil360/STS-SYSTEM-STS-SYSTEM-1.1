@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { emitSessionExpired } from '../utils/sessionEvents';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -31,9 +32,8 @@ api.interceptors.response.use(
     if (sessionInvalid) {
       localStorage.clear();
       const deactivated = message === 'Invalid or inactive user' || message === 'Account is disabled';
-      const loginUrl = deactivated ? '/login?deactivated=1' : '/login';
       if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = loginUrl;
+        emitSessionExpired({ deactivated });
       }
       return Promise.reject(error);
     }
@@ -49,7 +49,7 @@ api.interceptors.response.use(
       } catch {
         localStorage.clear();
         if (!window.location.pathname.startsWith('/login')) {
-          window.location.href = '/login';
+          emitSessionExpired({ deactivated: false });
         }
       }
     }

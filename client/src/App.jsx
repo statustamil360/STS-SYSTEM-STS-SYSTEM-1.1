@@ -7,6 +7,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import store from './redux/store';
 import getTheme from './theme';
 import AppRoutes from './routes/AppRoutes';
+import SessionGuard from './components/SessionGuard';
 import { fetchProfile } from './redux/slices/authSlice';
 import { fetchSystemSettings } from './redux/slices/settingsSlice';
 
@@ -26,10 +27,10 @@ const ThemedApp = () => {
     if (!isAuthenticated || !user) return undefined;
 
     const verifySession = () => {
-      dispatch(fetchProfile());
+      dispatch(fetchProfile({ silent: true }));
     };
 
-    const timer = setInterval(verifySession, 10000);
+    const timer = setInterval(verifySession, 30000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') verifySession();
     };
@@ -45,6 +46,7 @@ const ThemedApp = () => {
     <ThemeProvider theme={getTheme(darkMode ? 'dark' : 'light')}>
       <CssBaseline />
       <BrowserRouter>
+        <SessionGuard />
         <AppRoutes />
       </BrowserRouter>
       <ToastContainer position="top-right" autoClose={3000} theme={darkMode ? 'dark' : 'light'} />
