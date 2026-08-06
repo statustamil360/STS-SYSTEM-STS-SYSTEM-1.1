@@ -1,0 +1,293 @@
+import {
+  Drawer, List, ListItemButton, ListItemIcon, ListItemText,
+  Collapse, Box, Typography, ListSubheader,
+} from '@mui/material';
+import {
+  Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
+  Settings, Notifications, Security, SupportAgent, LocalHospital,
+  MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
+  Description, Person, Tune, ExpandLess, ExpandMore, Shield,
+} from '@mui/icons-material';
+import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { alpha } from '@mui/material/styles';
+import { MENU_CONFIG } from '../utils/menuConfig';
+import { ROLES } from '../utils/constants';
+import { DRAWER_WIDTH } from '../utils/layout';
+
+const ICON_MAP = {
+  Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
+  Settings, Notifications, Security, SupportAgent, LocalHospital,
+  MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
+  Description, Person, Tune,
+};
+
+const BRAND_GRADIENT = 'linear-gradient(135deg, #0D9488 0%, #14B8A6 100%)';
+const ACTIVE_GRADIENT = 'linear-gradient(135deg, #1E3A5F 0%, #2E5984 100%)';
+
+const SUPER_ADMIN = {
+  bg: '#0B1120',
+  header: '#070D18',
+  border: '#1E293B',
+  text: '#CBD5E1',
+  muted: '#64748B',
+  activeText: '#5EEAD4',
+  activeBg: 'rgba(13, 148, 136, 0.12)',
+  hoverBg: 'rgba(255, 255, 255, 0.05)',
+  brand: '#F8FAFC',
+};
+
+function NavIcon({ Icon, selected, dark }) {
+  if (!Icon) return null;
+  return (
+    <Box
+      sx={{
+        width: 34,
+        height: 34,
+        borderRadius: 2,
+        display: 'grid',
+        placeItems: 'center',
+        flexShrink: 0,
+        transition: 'all 180ms ease',
+        ...(selected
+          ? {
+            background: dark ? BRAND_GRADIENT : ACTIVE_GRADIENT,
+            boxShadow: dark
+              ? '0 4px 12px rgba(13, 148, 136, 0.35)'
+              : '0 4px 12px rgba(30, 58, 95, 0.22)',
+            color: '#FFFFFF',
+          }
+          : {
+            bgcolor: dark ? 'rgba(255,255,255,0.06)' : alpha('#64748B', 0.08),
+            color: dark ? SUPER_ADMIN.muted : '#64748B',
+          }),
+      }}
+    >
+      <Icon sx={{ fontSize: 18 }} />
+    </Box>
+  );
+}
+
+const Sidebar = ({ mobileOpen, onClose }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useSelector((state) => state.auth);
+  const { sidebarOpen } = useSelector((state) => state.ui);
+  const [openMenus, setOpenMenus] = useState({});
+  const isSuperAdmin = user?.role === ROLES.SUPER_ADMIN;
+  const menuItems = MENU_CONFIG[user?.role] || [];
+
+  const handleToggle = (title) => {
+    setOpenMenus((prev) => ({ ...prev, [title]: !prev[title] }));
+  };
+
+  const itemSx = (selected) => ({
+    mx: 1.5,
+    mb: 0.5,
+    px: 1.25,
+    py: 1,
+    borderRadius: 2.5,
+    transition: 'all 160ms ease',
+    ...(isSuperAdmin ? {
+      color: selected ? SUPER_ADMIN.activeText : SUPER_ADMIN.text,
+      bgcolor: selected ? SUPER_ADMIN.activeBg : 'transparent',
+      '&:hover': { bgcolor: selected ? SUPER_ADMIN.activeBg : SUPER_ADMIN.hoverBg },
+    } : {
+      color: selected ? 'primary.main' : 'text.primary',
+      bgcolor: selected ? (theme) => alpha(theme.palette.primary.main, 0.07) : 'transparent',
+      '&:hover': {
+        bgcolor: selected
+          ? (theme) => alpha(theme.palette.primary.main, 0.09)
+          : (theme) => alpha(theme.palette.primary.main, 0.04),
+      },
+    }),
+    '& .MuiListItemIcon-root': { minWidth: 42 },
+    '& .MuiListItemText-primary': {
+      fontWeight: selected ? 600 : 500,
+      fontSize: '0.8125rem',
+      lineHeight: 1.35,
+      whiteSpace: 'normal',
+      wordBreak: 'break-word',
+    },
+  });
+
+  const renderNavItem = (item, isChild = false) => {
+    const selected = location.pathname === item.path;
+    const Icon = ICON_MAP[item.icon] || Dashboard;
+
+    return (
+      <ListItemButton
+        key={item.path + item.title}
+        selected={selected && !isSuperAdmin}
+        onClick={() => { navigate(item.path); onClose?.(); }}
+        sx={{ ...itemSx(selected), ...(isChild && { pl: 2.5 }) }}
+      >
+        <ListItemIcon sx={{ minWidth: 42 }}>
+          <NavIcon Icon={Icon} selected={selected} dark={isSuperAdmin} />
+        </ListItemIcon>
+        <ListItemText primary={item.title} />
+      </ListItemButton>
+    );
+  };
+
+  const drawerPaperSx = {
+    width: DRAWER_WIDTH,
+    boxSizing: 'border-box',
+    borderRight: '1px solid',
+    borderColor: isSuperAdmin ? SUPER_ADMIN.border : 'divider',
+    bgcolor: isSuperAdmin ? SUPER_ADMIN.bg : '#FAFBFC',
+    boxShadow: isSuperAdmin ? 'none' : '4px 0 24px rgba(15, 23, 42, 0.04)',
+  };
+
+  const drawerContent = (
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: isSuperAdmin ? SUPER_ADMIN.bg : '#FAFBFC',
+      }}
+    >
+      <Box
+        sx={{
+          px: 2.5,
+          py: 2,
+          minHeight: 64,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          bgcolor: isSuperAdmin ? SUPER_ADMIN.header : 'background.paper',
+          borderBottom: '1px solid',
+          borderColor: isSuperAdmin ? SUPER_ADMIN.border : 'divider',
+        }}
+      >
+        <Box
+          sx={{
+            width: 38,
+            height: 38,
+            borderRadius: 2.5,
+            display: 'grid',
+            placeItems: 'center',
+            flexShrink: 0,
+            background: BRAND_GRADIENT,
+            boxShadow: '0 6px 16px rgba(13, 148, 136, 0.35)',
+            color: '#FFFFFF',
+          }}
+        >
+          {isSuperAdmin ? <Shield sx={{ fontSize: 20 }} /> : <LocalHospital sx={{ fontSize: 20 }} />}
+        </Box>
+        <Typography
+          noWrap
+          sx={{
+            fontWeight: 700,
+            fontSize: '0.9375rem',
+            letterSpacing: '-0.01em',
+            color: isSuperAdmin ? SUPER_ADMIN.brand : 'primary.main',
+            minWidth: 0,
+          }}
+        >
+          AMC Teleconference
+        </Typography>
+      </Box>
+
+      <List sx={{ px: 0, py: 2, flex: 1, overflowY: 'auto' }}>
+        {menuItems.map((item, index) => {
+          if (item.section) {
+            return (
+              <ListSubheader
+                key={`section-${item.section}-${index}`}
+                disableSticky
+                sx={{
+                  bgcolor: 'transparent',
+                  color: isSuperAdmin ? SUPER_ADMIN.muted : 'text.disabled',
+                  fontWeight: 700,
+                  fontSize: '0.625rem',
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                  lineHeight: 1,
+                  mt: index > 0 ? 2.5 : 0.5,
+                  mb: 1,
+                  px: 2.5,
+                }}
+              >
+                {item.section}
+              </ListSubheader>
+            );
+          }
+
+          if (item.children) {
+            const isOpen = openMenus[item.title];
+            const ParentIcon = ICON_MAP[item.icon] || Dashboard;
+            return (
+              <Box key={item.title}>
+                <ListItemButton onClick={() => handleToggle(item.title)} sx={itemSx(false)}>
+                  <ListItemIcon sx={{ minWidth: 42 }}>
+                    <NavIcon Icon={ParentIcon} selected={false} dark={isSuperAdmin} />
+                  </ListItemIcon>
+                  <ListItemText primary={item.title} />
+                  {isOpen
+                    ? <ExpandLess sx={{ fontSize: 18, color: isSuperAdmin ? SUPER_ADMIN.muted : 'text.disabled' }} />
+                    : <ExpandMore sx={{ fontSize: 18, color: isSuperAdmin ? SUPER_ADMIN.muted : 'text.disabled' }} />}
+                </ListItemButton>
+                <Collapse in={isOpen}>
+                  <List component="div" disablePadding>
+                    {item.children.map((child) => renderNavItem(child, true))}
+                  </List>
+                </Collapse>
+              </Box>
+            );
+          }
+
+          return renderNavItem(item);
+        })}
+      </List>
+
+      <Box
+        sx={{
+          height: 3,
+          mx: 2,
+          mb: 2,
+          borderRadius: 2,
+          background: isSuperAdmin
+            ? BRAND_GRADIENT
+            : `linear-gradient(90deg, ${alpha('#1E3A5F', 0.15)}, ${alpha('#0D9488', 0.25)})`,
+          flexShrink: 0,
+        }}
+      />
+    </Box>
+  );
+
+  return (
+    <>
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={onClose}
+        ModalProps={{ keepMounted: true }}
+        sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': drawerPaperSx }}
+      >
+        {drawerContent}
+      </Drawer>
+      <Drawer
+        variant="persistent"
+        open={sidebarOpen}
+        sx={{
+          display: { xs: 'none', md: 'block' },
+          width: sidebarOpen ? DRAWER_WIDTH : 0,
+          flexShrink: 0,
+          transition: (theme) => theme.transitions.create('width', {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.leavingScreen,
+          }),
+          overflowX: 'hidden',
+          '& .MuiDrawer-paper': drawerPaperSx,
+        }}
+      >
+        {drawerContent}
+      </Drawer>
+    </>
+  );
+};
+
+export default Sidebar;
