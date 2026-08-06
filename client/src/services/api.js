@@ -30,8 +30,10 @@ api.interceptors.response.use(
 
     if (sessionInvalid) {
       localStorage.clear();
+      const deactivated = message === 'Invalid or inactive user' || message === 'Account is disabled';
+      const loginUrl = deactivated ? '/login?deactivated=1' : '/login';
       if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+        window.location.href = loginUrl;
       }
       return Promise.reject(error);
     }

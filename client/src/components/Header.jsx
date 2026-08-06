@@ -48,7 +48,14 @@ const Header = ({ onMobileMenuOpen }) => {
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    api.get('/notifications?limit=1').then(({ data }) => setUnreadCount(data.unreadCount || 0)).catch(() => {});
+    const fetchUnread = () => {
+      api.get('/notifications?limit=1')
+        .then(({ data }) => setUnreadCount(data.unreadCount || 0))
+        .catch(() => {});
+    };
+    fetchUnread();
+    const timer = setInterval(fetchUnread, 15000);
+    return () => clearInterval(timer);
   }, [location.pathname]);
 
   const pageMeta = getPageMeta(location.pathname, user?.role);

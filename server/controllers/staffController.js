@@ -135,6 +135,10 @@ exports.update = async (req, res, next) => {
     const [rows] = await pool.execute('SELECT user_id FROM receptionists WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Not found' });
     const userId = rows[0].user_id;
+
+    const [currentUser] = await pool.execute('SELECT status FROM users WHERE id = ?', [userId]);
+    const previousStatus = currentUser[0]?.status;
+
     if (email) {
       const [existing] = await pool.execute('SELECT id FROM users WHERE email = ? AND id != ?', [email, userId]);
       if (existing.length) {
@@ -142,7 +146,23 @@ exports.update = async (req, res, next) => {
       }
       await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, userId]);
     }
-    if (status) await setUserStatus(pool, userId, status);
+
+    let sessionRevoked = false;
+    if (status && status !== previousStatus) {
+      await setUserStatus(pool, userId, status);
+      if (status !== 'active') {
+        sessionRevoked = true;
+        await pool.execute(
+          'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+          [
+            userId,
+            'Account Deactivated',
+            `Your account was set to ${status} by an administrator. You have been signed out.`,
+            'security',
+          ]
+        );
+      }
+    }
 
     const profileSets = [];
     const profileValues = [];
@@ -191,7 +211,13 @@ exports.update = async (req, res, next) => {
       ipAddress: req.ip,
     });
 
-    res.json({ success: true, message: 'Receptionist updated successfully' });
+    res.json({
+      success: true,
+      message: sessionRevoked
+        ? 'Receptionist updated and signed out from all devices'
+        : 'Receptionist updated successfully',
+      sessionRevoked,
+    });
   } catch (err) { next(err); }
 };
 

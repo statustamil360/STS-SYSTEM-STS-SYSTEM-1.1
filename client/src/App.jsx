@@ -29,7 +29,7 @@ const ThemedApp = () => {
       dispatch(fetchProfile());
     };
 
-    const timer = setInterval(verifySession, 30000);
+    const timer = setInterval(verifySession, 10000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') verifySession();
     };

@@ -35,6 +35,10 @@ const ProtectedRoute = ({ allowedRoles }) => {
     return <Navigate to="/login" replace state={{ sessionExpired: true, from: location.pathname }} />;
   }
 
+  if (user.status && user.status !== 'active') {
+    return <Navigate to="/login?deactivated=1" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     const home = ROLE_HOME_PATHS[user.role] || '/dashboard';
     return (
