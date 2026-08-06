@@ -43,6 +43,7 @@ const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const sessionExpired = location.state?.sessionExpired;
+  const accountDeactivated = new URLSearchParams(location.search).get('deactivated') === '1';
   const { loading, error, isAuthenticated, user } = useSelector((state) => state.auth);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -80,7 +81,13 @@ const Login = () => {
         Enter your credentials to access your AMC workspace.
       </Typography>
 
-      {sessionExpired && !error && (
+      {accountDeactivated && !error && (
+        <Alert severity="warning" variant="outlined" sx={{ mb: 2.5, borderRadius: 2 }}>
+          Your account has been deactivated by an administrator. Please contact your admin to restore access.
+        </Alert>
+      )}
+
+      {sessionExpired && !error && !accountDeactivated && (
         <Alert severity="warning" variant="outlined" sx={{ mb: 2.5, borderRadius: 2 }}>
           Your session expired. Please sign in again.
         </Alert>

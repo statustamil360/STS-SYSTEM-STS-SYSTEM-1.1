@@ -72,6 +72,7 @@ exports.login = async (req, res, next) => {
           email: user.email,
           username: user.username,
           role: user.role,
+          status: user.status,
           profile: profiles[0] || null,
         },
         accessToken,
@@ -97,7 +98,11 @@ exports.refreshToken = async (req, res, next) => {
     );
 
     if (!users.length || users[0].refresh_token !== refreshToken) {
-      return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+      return res.status(401).json({
+        success: false,
+        message: users.length ? 'Invalid refresh token' : 'Invalid or inactive user',
+        code: 'SESSION_INVALID',
+      });
     }
 
     const [roleRows] = await pool.execute(

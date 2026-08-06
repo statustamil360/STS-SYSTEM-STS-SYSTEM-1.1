@@ -434,8 +434,11 @@ const createStaffPage = ({
           }
         });
         if (editRow) {
-          await api.put(`${endpoint}/${editRow.id}`, payload);
-          toast.success(`${singular} updated successfully`);
+          const { data: res } = await api.put(`${endpoint}/${editRow.id}`, payload);
+          toast.success(res.message || `${singular} updated successfully`);
+          if (res.sessionRevoked) {
+            toast.info('The user has been signed out from all active sessions.', { autoClose: 5000 });
+          }
         } else {
           await api.post(endpoint, payload);
           toast.success(
@@ -465,8 +468,11 @@ const createStaffPage = ({
       setSubmitting(true);
       try {
         if (allowDeactivate) {
-          await api.put(`${endpoint}/${pendingDelete.id}`, { status: 'inactive' });
-          toast.success(`${singular} deactivated successfully`);
+          const { data: res } = await api.put(`${endpoint}/${pendingDelete.id}`, { status: 'inactive' });
+          toast.success(res.message || `${singular} deactivated successfully`);
+          if (res.sessionRevoked) {
+            toast.info('The user has been signed out from all active sessions.', { autoClose: 5000 });
+          }
         } else {
           await api.delete(`${endpoint}/${pendingDelete.id}`);
           toast.success(`${singular} deleted successfully`);

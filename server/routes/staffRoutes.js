@@ -22,7 +22,9 @@ router.post('/receptionists', authorize('admin'), [
   body('emergency_contact').optional({ values: 'falsy' }).trim().isLength({ max: 100 }),
   body('status').optional().isIn(['active', 'inactive']),
 ], validate, staffController.create);
-router.put('/receptionists/:id', authorize('admin', 'super_admin'), staffController.update);
+router.put('/receptionists/:id', authorize('admin', 'super_admin'), [
+  body('status').optional().isIn(['active', 'inactive', 'disabled']),
+], validate, staffController.update);
 router.patch('/receptionists/:id/password', authorize('admin', 'super_admin'), [
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
 ], validate, staffController.resetReceptionistPassword);
