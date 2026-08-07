@@ -215,6 +215,23 @@ cd client && npm run preview
 
 ---
 
+## Production deployment
+
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full VPS/cloud deployment steps.
+
+**Quick production start** (after DB setup and `server/.env` configured):
+
+```bash
+npm run deploy:prepare
+npm run start:prod
+```
+
+Then open **http://localhost:5000** (or your domain via reverse proxy).
+
+Production uses one server: Express serves `client/dist` + `/api` + `/uploads`.
+
+---
+
 ## Demo Login Accounts
 
 Use the **same login page** for every role. Passwords are set during account creation or by the seed script.

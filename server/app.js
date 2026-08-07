@@ -87,6 +87,19 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/preferences', preferencesRoutes);
 
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist, { index: false, maxAge: '1d' }));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+    res.sendFile(path.join(clientDist, 'index.html'), (err) => {
+      if (err) next(err);
+    });
+  });
+}
+
 app.use(notFound);
 app.use(errorHandler);
 
