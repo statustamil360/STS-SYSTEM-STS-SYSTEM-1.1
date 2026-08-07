@@ -1,13 +1,12 @@
-import { useId } from 'react';
 import {
   Box, Typography, Stack, TextField, Grid, InputAdornment, MenuItem,
-  FormControl, InputLabel, Select, FormHelperText, OutlinedInput,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Controller } from 'react-hook-form';
 import {
   getFieldPlaceholder,
   selectMenuSlotProps,
+  SELECT_PLACEHOLDER,
 } from '../utils/fieldPlaceholders';
 
 export { SELECT_PLACEHOLDER, selectMenuSlotProps } from '../utils/fieldPlaceholders';
@@ -193,7 +192,6 @@ const SelectFieldCore = ({
   showSelectPlaceholder,
   disabled = false,
 }) => {
-  const labelId = useId();
   const enablePlaceholder = showSelectPlaceholder !== false;
   const selectValue = normalizeSelectValue(value);
 
@@ -202,65 +200,66 @@ const SelectFieldCore = ({
     label: opt.label,
   }));
 
-  const selectChildren = children || (
-    <>
-      {enablePlaceholder && <SelectPlaceholderMenuItem />}
-      {normalizedOptions?.map((opt) => (
-        <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-      ))}
-    </>
-  );
+  const menuItems = children || [
+    ...(enablePlaceholder
+      ? [
+        <MenuItem key="__placeholder__" value="">
+          <Typography component="span" variant="body2" color="text.secondary">
+            {SELECT_PLACEHOLDER}
+          </Typography>
+        </MenuItem>,
+      ]
+      : []),
+    ...(normalizedOptions?.map((opt) => (
+      <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+    )) ?? []),
+  ];
 
   return (
-    <FormControl
+    <TextField
       fullWidth
       size="small"
-      error={error}
+      select
+      id={name}
+      name={name}
+      label={label}
+      value={selectValue}
+      onChange={(event) => onChange?.(event.target.value)}
+      onBlur={onBlur}
+      inputRef={inputRef}
       required={required}
+      error={error}
+      helperText={helperText}
       disabled={disabled}
       sx={fieldSx}
+      slotProps={{
+        inputLabel: { shrink: true },
+        input: Icon ? {
+          startAdornment: (
+            <InputAdornment position="start" sx={{ ml: 0.5, pointerEvents: 'none' }}>
+              <Icon sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
+            </InputAdornment>
+          ),
+        } : undefined,
+        select: {
+          displayEmpty: enablePlaceholder,
+          MenuProps: selectMenuSlotProps,
+          renderValue: enablePlaceholder
+            ? (selected) => {
+              const isEmpty = selected === '' || selected === undefined || selected === null;
+              if (isEmpty) return SELECT_PLACEHOLDER;
+              if (normalizedOptions?.length) {
+                const match = normalizedOptions.find((opt) => opt.value === String(selected));
+                if (match) return match.label;
+              }
+              return selected;
+            }
+            : undefined,
+        },
+      }}
     >
-      <InputLabel id={labelId} shrink required={required}>
-        {label}
-      </InputLabel>
-      <Select
-        labelId={labelId}
-        id={name}
-        name={name}
-        label={label}
-        value={selectValue}
-        onChange={onChange}
-        onBlur={onBlur}
-        inputRef={inputRef}
-        displayEmpty={enablePlaceholder}
-        MenuProps={selectMenuSlotProps}
-        input={(
-          <OutlinedInput
-            label={label}
-            notched
-            startAdornment={Icon ? (
-              <InputAdornment position="start" sx={{ ml: 0.5, pointerEvents: 'none' }}>
-                <Icon sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
-              </InputAdornment>
-            ) : undefined}
-          />
-        )}
-        renderValue={(selected) => {
-          const isEmpty = selected === '' || selected === undefined || selected === null;
-          if (enablePlaceholder && isEmpty) {
-            return renderSelectPlaceholder();
-          }
-          if (normalizedOptions?.length) {
-            const match = normalizedOptions.find((opt) => opt.value === String(selected));
-            if (match) return match.label;
-          }
-          return selected;
-        }}
-      >
-        {selectChildren}
-      </Select>
-      {helperText ? <FormHelperText>{helperText}</FormHelperText> : null}
-    </FormControl>
+      {menuItems}
+    </TextField>
   );
 };
 
@@ -369,7 +368,7 @@ export const IconField = ({
         <SelectFieldCore
           {...sharedSelectProps}
           value={value}
-          onChange={onChange}
+          onChange={(nextValue) => onChange({ target: { value: nextValue, name } })}
           onBlur={onBlur}
           inputRef={inputRef}
         />
@@ -382,12 +381,11 @@ export const IconField = ({
           name={name}
           control={control}
           rules={registerOptions}
-          defaultValue={defaultValue ?? ''}
           render={({ field, fieldState }) => (
             <SelectFieldCore
               {...sharedSelectProps}
-              value={field.value}
-              onChange={(event) => field.onChange(event.target.value)}
+              value={field.value ?? ''}
+              onChange={field.onChange}
               onBlur={field.onBlur}
               inputRef={field.ref}
               error={error ?? !!fieldState.error}
@@ -397,6 +395,8 @@ export const IconField = ({
         />
       );
     }
+
+    return null;
   }
 
   return (

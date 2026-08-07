@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Dialog, DialogContent, TextField, Grid, Button, DialogActions,
-  Box, Typography, Stack, InputAdornment, alpha, Avatar, Chip,
+  Box, Typography, Stack, InputAdornment, alpha, Avatar, Chip, Alert, CircularProgress,
 } from '@mui/material';
 import {
   PersonAddOutlined, PersonOutlined, CalendarTodayOutlined, BadgeOutlined,
   PhoneOutlined, EmailOutlined, LocationOnOutlined, ContactEmergencyOutlined,
   HealthAndSafetyOutlined, NotesOutlined, WcOutlined, ContactPhoneOutlined,
   MedicalInformationOutlined, PhoneInTalkOutlined, AddLocationAltOutlined,
-  CakeOutlined, KeyboardArrowDownOutlined,
+  CakeOutlined, KeyboardArrowDownOutlined, MedicalServicesOutlined,
 } from '@mui/icons-material';
 import { useForm } from 'react-hook-form';
 import { toast } from 'react-toastify';
@@ -23,6 +23,11 @@ import {
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { ROLES } from '../../utils/constants';
+import {
+  mapPatientToForm,
+  buildPatientPayload,
+  PATIENT_FORM_DEFAULTS,
+} from '../../utils/crudHelpers';
 
 const calculateAge = (dob) => {
   if (!dob) return '';
@@ -139,14 +144,16 @@ const ViewSection = ({ title, icon: Icon, children }) => (
   </Box>
 );
 
-const PatientViewDialog = ({ open, patient, onClose }) => {
+const PatientViewDialog = ({ open, patient, loading, onClose }) => {
   const { formatDate } = useSystemDateTime();
-  if (!patient) return null;
-  const fullName = patient.full_name || `${patient.first_name || ''} ${patient.last_name || ''}`.trim();
+  if (!open) return null;
+  const fullName = patient
+    ? (patient.full_name || `${patient.first_name || ''} ${patient.last_name || ''}`.trim())
+    : '';
   const initials = fullName
     ? fullName.split(' ').filter(Boolean).slice(0, 2).map((n) => n[0]?.toUpperCase()).join('')
     : '?';
-  const age = calculateAge(patient.dob);
+  const age = patient ? calculateAge(patient.dob) : '';
 
   return (
     <Dialog
@@ -223,7 +230,7 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
               >
                 {fullName || 'Patient Record'}
               </Typography>
-              {patient.patient_code && (
+              {patient?.patient_code && (
                 <Typography variant="body2" sx={{ mt: 0.25, opacity: 0.85, fontWeight: 500 }}>
                   {patient.patient_code}
                 </Typography>
@@ -242,7 +249,7 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
               flexShrink: 0,
             }}
           >
-            {patient.gender && (
+            {patient?.gender && (
               <Chip
                 label={formatGender(patient.gender)}
                 size="small"
@@ -256,14 +263,14 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
                 sx={{ bgcolor: alpha('#FFFFFF', 0.14), color: 'common.white', fontWeight: 600, border: '1px solid', borderColor: alpha('#FFFFFF', 0.2) }}
               />
             )}
-            {patient.phone && (
+            {patient?.phone && (
               <Chip
                 label={patient.phone}
                 size="small"
                 sx={{ bgcolor: alpha('#FFFFFF', 0.12), color: 'common.white', fontWeight: 500, border: '1px solid', borderColor: alpha('#FFFFFF', 0.18) }}
               />
             )}
-            {patient.nic && (
+            {patient?.nic && (
               <Chip
                 label={`Medical ID: ${patient.nic}`}
                 size="small"
@@ -275,6 +282,14 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
       </Box>
 
       <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 3, overflowY: 'auto', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.015) }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+            <CircularProgress size={36} />
+          </Box>
+        ) : !patient ? (
+          <Typography color="text.secondary" textAlign="center" py={4}>Unable to load patient details.</Typography>
+        ) : (
+          <>
         <ViewSection title="Personal Information" icon={PersonOutlined}>
           <DetailRow icon={BadgeOutlined} label="Patient ID" value={patient.patient_code} />
           <DetailRow icon={PersonOutlined} label="Full Name" value={fullName} />
@@ -295,6 +310,12 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
 
         <ViewSection title="Medical & Coverage" icon={MedicalInformationOutlined}>
           <DetailRow icon={HealthAndSafetyOutlined} label="Insurance" value={patient.insurance} />
+          {(patient.gp_code || patient.ahp_code) && (
+            <>
+              <DetailRow icon={MedicalServicesOutlined} label="Assigned GP" value={patient.gp_code} />
+              <DetailRow icon={HealthAndSafetyOutlined} label="Assigned AHP" value={patient.ahp_code} />
+            </>
+          )}
           <Grid size={{ xs: 12 }}>
             <Box
               sx={{
@@ -353,6 +374,8 @@ const PatientViewDialog = ({ open, patient, onClose }) => {
             </Box>
           </Grid>
         </ViewSection>
+          </>
+        )}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, py: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
@@ -374,6 +397,7 @@ const Patients = () => {
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState('');
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -385,22 +409,29 @@ const Patients = () => {
   const [sortBy, setSortBy] = useState('id');
   const [sortOrder, setSortOrder] = useState('desc');
   const [open, setOpen] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [gps, setGps] = useState([]);
+  const [ahps, setAhps] = useState([]);
   const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
   const [viewRow, setViewRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const { register, handleSubmit, reset, watch, control } = useForm();
+  const { register, handleSubmit, reset, watch, control, formState: { errors } } = useForm({
+    defaultValues: PATIENT_FORM_DEFAULTS,
+  });
   const dobValue = watch('dob');
   const currentAge = calculateAge(dobValue);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setListError('');
     try {
       const { data } = await api.get('/patients', {
         params: {
-          search,
+          search: search || undefined,
           gender: genderFilter || undefined,
           has_medical_id: medicalIdFilter || undefined,
           has_mobile: mobileFilter || undefined,
@@ -412,38 +443,109 @@ const Patients = () => {
         },
       });
       setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch { toast.error('Failed to load patients'); }
-    finally { setLoading(false); }
+      setTotal(data.pagination?.total ?? 0);
+    } catch (err) {
+      setRows([]);
+      setTotal(0);
+      const message = err.response?.data?.message || 'Failed to load patients';
+      setListError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
   }, [search, genderFilter, medicalIdFilter, mobileFilter, insuranceFilter, sortBy, sortOrder, page, rowsPerPage]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleOpen = (row = null) => {
-    setEditRow(row);
-    reset(row || { first_name: '', last_name: '', dob: '', gender: '', nic: '', phone: '', land_phone: '', email: '', address: '', address_2: '', medical_history: '', emergency_contact: '', insurance: '' });
+  useEffect(() => {
+    if (!canManage) return undefined;
+    Promise.all([
+      api.get('/staff/gps', { params: { limit: 500, status: 'active' } }),
+      api.get('/staff/ahps', { params: { limit: 500, status: 'active' } }),
+    ])
+      .then(([gpsRes, ahpsRes]) => {
+        setGps(gpsRes.data.data ?? []);
+        setAhps(ahpsRes.data.data ?? []);
+      })
+      .catch(() => {
+        toast.error('Failed to load GP/AHP options');
+      });
+    return undefined;
+  }, [canManage]);
+
+  const gpOptions = gps.map((g) => ({
+    value: String(g.id),
+    label: `${g.first_name || ''} ${g.last_name || ''}`.trim() || g.gp_code,
+  }));
+
+  const ahpOptions = ahps.map((a) => ({
+    value: String(a.id),
+    label: `${a.first_name || ''} ${a.last_name || ''}`.trim() || a.ahp_code,
+  }));
+
+  const handleOpen = async (row = null) => {
     setOpen(true);
+    setEditRow(row);
+    if (row?.id) {
+      setFormLoading(true);
+      try {
+        const { data } = await api.get(`/patients/${row.id}`);
+        const patient = data.data;
+        setEditRow(patient);
+        reset(mapPatientToForm(patient));
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to load patient details');
+        reset(mapPatientToForm(row));
+      } finally {
+        setFormLoading(false);
+      }
+    } else {
+      reset(mapPatientToForm(null));
+    }
+  };
+
+  const handleCloseForm = () => {
+    setOpen(false);
+    setEditRow(null);
+    reset(PATIENT_FORM_DEFAULTS);
+  };
+
+  const onInvalid = (formErrors) => {
+    const firstError = Object.values(formErrors).find((e) => e?.message);
+    toast.error(firstError?.message || 'Please complete all required fields');
   };
 
   const onSubmit = async (formData) => {
     setSubmitting(true);
     try {
+      const payload = buildPatientPayload(formData);
       if (editRow) {
-        await api.put(`/patients/${editRow.id}`, formData);
+        await api.put(`/patients/${editRow.id}`, payload);
         toast.success('Patient updated successfully');
       } else {
-        await api.post('/patients', formData);
+        await api.post('/patients', payload);
         toast.success('Patient created successfully');
+        setPage(0);
       }
-      setOpen(false);
+      handleCloseForm();
       fetchData();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
   };
 
-  const handleView = (row) => {
-    setViewRow(row);
+  const handleView = async (row) => {
     setViewOpen(true);
+    setViewLoading(true);
+    setViewRow(null);
+    try {
+      const { data } = await api.get(`/patients/${row.id}`);
+      setViewRow({ ...row, ...data.data });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load patient details');
+      setViewOpen(false);
+    } finally {
+      setViewLoading(false);
+    }
   };
 
   const handleDelete = (row) => {
@@ -456,9 +558,10 @@ const Patients = () => {
     try {
       await api.delete(`/patients/${pendingDelete.id}`);
       toast.success('Patient deleted successfully');
+      if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
       fetchData();
-    } catch {
-      toast.error('Failed to delete patient');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete patient');
     } finally {
       setConfirmOpen(false);
       setPendingDelete(null);
@@ -511,6 +614,9 @@ const Patients = () => {
 
   return (
     <>
+      {listError && !loading && (
+        <Alert severity="error" sx={{ mb: 2 }}>{listError}</Alert>
+      )}
       <DataTable
         title={isClinical ? 'Assigned Patient Records' : 'Patient Records'}
         columns={columns}
@@ -539,15 +645,17 @@ const Patients = () => {
       <PatientViewDialog
         open={viewOpen}
         patient={viewRow}
+        loading={viewLoading}
         onClose={() => { setViewOpen(false); setViewRow(null); }}
       />
 
       <Dialog
         open={open}
-        onClose={handleFormDialogClose(() => setOpen(false), submitting)}
+        onClose={handleFormDialogClose(handleCloseForm, submitting)}
         maxWidth="md"
         fullWidth
         scroll="paper"
+        disableScrollLock
         slotProps={{ paper: { sx: dialogPaperSx } }}
       >
         <PremiumDialogHeader
@@ -563,16 +671,22 @@ const Patients = () => {
         <Box
           key={editRow?.id ?? 'new'}
           component="form"
-          onSubmit={handleSubmit(onSubmit)}
+          onSubmit={handleSubmit(onSubmit, onInvalid)}
           sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         >
           <DialogContent dividers sx={dialogContentSx}>
+            {formLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                <CircularProgress size={36} />
+              </Box>
+            ) : (
+              <>
             <SectionCard title="Personal Information" icon={PersonOutlined}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <IconField label="First Name" name="first_name" icon={PersonOutlined} register={register} required />
+                <IconField label="First Name" name="first_name" icon={PersonOutlined} register={register} registerOptions={{ required: 'First name is required' }} required error={!!errors.first_name} helperText={errors.first_name?.message} />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <IconField label="Last Name" name="last_name" icon={PersonOutlined} register={register} required />
+                <IconField label="Last Name" name="last_name" icon={PersonOutlined} register={register} registerOptions={{ required: 'Last name is required' }} required error={!!errors.last_name} helperText={errors.last_name?.message} />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <IconField label="Date of Birth" name="dob" type="date" shrink icon={CalendarTodayOutlined} register={register} />
@@ -614,7 +728,6 @@ const Patients = () => {
                   icon={WcOutlined}
                   select
                   control={control}
-                  defaultValue={editRow?.gender || ''}
                   options={[
                     { value: 'male', label: 'Male' },
                     { value: 'female', label: 'Female' },
@@ -623,6 +736,31 @@ const Patients = () => {
                 />
               </Grid>
             </SectionCard>
+
+            {canManage && (
+              <SectionCard title="Clinical Assignment" icon={MedicalServicesOutlined}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <IconField
+                    label="Assigned GP"
+                    name="assigned_gp_id"
+                    select
+                    control={control}
+                    icon={MedicalServicesOutlined}
+                    options={gpOptions}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <IconField
+                    label="Assigned AHP"
+                    name="assigned_ahp_id"
+                    select
+                    control={control}
+                    icon={HealthAndSafetyOutlined}
+                    options={ahpOptions}
+                  />
+                </Grid>
+              </SectionCard>
+            )}
 
             <SectionCard title="Contact Details" icon={ContactPhoneOutlined}>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -660,12 +798,14 @@ const Patients = () => {
                 />
               </Grid>
             </SectionCard>
+              </>
+            )}
           </DialogContent>
 
           <FormDialogActions
-            onCancel={() => setOpen(false)}
+            onCancel={handleCloseForm}
             submitLabel={editRow ? 'Update Patient' : 'Create Patient'}
-            loading={submitting}
+            loading={submitting || formLoading}
           />
         </Box>
       </Dialog>

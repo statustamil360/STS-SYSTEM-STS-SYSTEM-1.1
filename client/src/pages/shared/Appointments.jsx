@@ -20,6 +20,7 @@ import {
   handleFormDialogClose,
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
+import { formatDateInput, formatTimeInput } from '../../utils/crudHelpers';
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'];
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
@@ -155,6 +156,15 @@ const Appointments = () => {
     (a) => a.profession === profession && a.status === 'active'
   );
 
+  const handleCloseForm = () => {
+    setOpen(false);
+    setEditRow(null);
+    setSelectedFiles([]);
+    setExistingFiles([]);
+    reset(defaultFormValues);
+    setAhpRows([emptyAhpRow()]);
+  };
+
   const handleOpen = async (row = null) => {
     setEditRow(row);
     setSelectedFiles([]);
@@ -170,8 +180,8 @@ const Appointments = () => {
           title: appt.title || '',
           important_note: appt.important_note || '',
           comments: appt.comments || '',
-          appointment_date: appt.appointment_date?.slice?.(0, 10) || appt.appointment_date,
-          appointment_time: appt.appointment_time?.slice?.(0, 5) || appt.appointment_time,
+          appointment_date: formatDateInput(appt.appointment_date),
+          appointment_time: formatTimeInput(appt.appointment_time),
           patient_previous_records: appt.patient_previous_records || '',
           notes: appt.notes || '',
           status: appt.status || 'scheduled',
@@ -263,7 +273,8 @@ const Appointments = () => {
       }
 
       toast.success(editRow ? 'Appointment updated successfully' : 'Conference appointment booked successfully');
-      setOpen(false);
+      handleCloseForm();
+      if (!editRow) setPage(0);
       fetchData();
     } catch (err) {
       const apiMessage = err.response?.data?.message;
@@ -300,6 +311,7 @@ const Appointments = () => {
     try {
       await api.delete(`/appointments/${pendingDelete.id}`);
       toast.success('Appointment deleted successfully');
+      if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
       fetchData();
     } catch {
       toast.error('Failed to delete appointment');
@@ -369,7 +381,7 @@ const Appointments = () => {
 
       <Dialog
         open={open}
-        onClose={handleFormDialogClose(() => setOpen(false), submitting)}
+        onClose={handleFormDialogClose(handleCloseForm, submitting)}
         maxWidth="md"
         fullWidth
         scroll="paper"
@@ -383,6 +395,7 @@ const Appointments = () => {
             : 'Schedule a teleconference with patient, GP, and allied health professionals'}
         />
         <Box
+          key={editRow?.id ?? 'new'}
           component="form"
           onSubmit={handleSubmit(onSubmit, onInvalid)}
           sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
@@ -664,7 +677,6 @@ const Appointments = () => {
                     icon={InfoOutlined}
                     control={control}
                     showSelectPlaceholder={false}
-                    defaultValue={editRow.status}
                   >
                     {APPOINTMENT_STATUS.map((s) => (
                       <MenuItem key={s} value={s}>{formatLabel(s)}</MenuItem>
@@ -675,7 +687,7 @@ const Appointments = () => {
             </SectionCard>
           </DialogContent>
           <FormDialogActions
-            onCancel={() => setOpen(false)}
+            onCancel={handleCloseForm}
             submitLabel={editRow ? 'Update Appointment' : 'Finish & Book Appointment'}
             loading={submitting}
           />

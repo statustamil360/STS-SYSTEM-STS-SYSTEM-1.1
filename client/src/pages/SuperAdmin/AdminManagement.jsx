@@ -11,7 +11,7 @@ import PageHeader from '../../components/PageHeader';
 import DataTable from '../../components/DataTable';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import api from '../../services/api';
-import { adminCreateSchema, adminEditSchema, adminPasswordResetSchema } from '../../utils/formSchemas';
+import { adminUpsertSchema, adminPasswordResetSchema } from '../../utils/formSchemas';
 import { getFieldPlaceholder, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
 import { handleFormDialogClose } from '../../components/PremiumFormFields';
 
@@ -30,9 +30,9 @@ const AdminManagement = () => {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
 
-  const schema = editRow ? adminEditSchema : adminCreateSchema;
   const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
-    resolver: yupResolver(schema),
+    resolver: yupResolver(adminUpsertSchema),
+    context: { isEdit: Boolean(editRow) },
   });
 
   const resetPasswordForm = useForm({
@@ -54,6 +54,11 @@ const AdminManagement = () => {
   }, [search, page, rowsPerPage]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleCloseForm = () => {
+    setOpen(false);
+    setEditRow(null);
+  };
 
   const handleOpen = (row = null) => {
     setEditRow(row);
@@ -90,8 +95,9 @@ const AdminManagement = () => {
           'Admin created successfully. They can log in using the email and password you entered on the shared login page.',
           { autoClose: 6000 }
         );
+        setPage(0);
       }
-      setOpen(false);
+      handleCloseForm();
       fetchData();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Operation failed');
@@ -176,7 +182,7 @@ const AdminManagement = () => {
         onResetPassword={openResetDialog}
       />
 
-      <Dialog open={open} onClose={handleFormDialogClose(() => setOpen(false), submitting)} maxWidth="sm" fullWidth>
+      <Dialog open={open} onClose={handleFormDialogClose(handleCloseForm, submitting)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ pb: 1 }}>
           <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
             <AdminPanelSettings color="primary" />
@@ -193,7 +199,7 @@ const AdminManagement = () => {
           </Stack>
         </DialogTitle>
         <Divider />
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form key={editRow?.id ?? 'new'} onSubmit={handleSubmit(onSubmit)}>
           <DialogContent sx={{ pt: 2.5 }}>
             {!editRow && (
               <Alert severity="info" sx={{ mb: 2 }}>
@@ -239,7 +245,6 @@ const AdminManagement = () => {
                 <Controller
                   name="status"
                   control={control}
-                  defaultValue={editRow?.status || 'active'}
                   render={({ field }) => (
                     <TextField
                       fullWidth
@@ -263,7 +268,7 @@ const AdminManagement = () => {
           </DialogContent>
           <Divider />
           <DialogActions sx={{ px: 3, py: 2 }}>
-            <Button onClick={() => setOpen(false)} color="inherit" disabled={submitting}>Cancel</Button>
+            <Button onClick={handleCloseForm} color="inherit" disabled={submitting}>Cancel</Button>
             <Button type="submit" variant="contained" disabled={submitting}>
               {submitting ? 'Saving...' : editRow ? 'Save Changes' : 'Create Admin'}
             </Button>

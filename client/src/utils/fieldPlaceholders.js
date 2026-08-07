@@ -41,11 +41,17 @@ export const shouldShowSelectPlaceholder = ({ defaultValue, showSelectPlaceholde
   return defaultValue === undefined || defaultValue === '' || defaultValue === null;
 };
 
-/** MUI v9 MenuProps — portal keeps menus usable inside scrollable dialogs. */
+/** MUI v9 MenuProps — portal + elevated z-index keeps menus clickable inside dialogs. */
 export const selectMenuSlotProps = {
   disablePortal: false,
+  disableScrollLock: true,
   slotProps: {
-    paper: { sx: { maxHeight: 320 } },
+    paper: {
+      sx: {
+        maxHeight: 320,
+        zIndex: (theme) => theme.zIndex.modal + 2,
+      },
+    },
   },
 };
 

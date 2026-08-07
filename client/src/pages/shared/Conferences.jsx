@@ -105,10 +105,16 @@ const Conferences = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const handleOpen = (row = null) => {
+  const handleOpen = (row) => {
     setEditRow(row);
-    reset(row || { status: row?.status || 'scheduled' });
+    reset({ status: row.status });
     setOpen(true);
+  };
+
+  const handleCloseForm = () => {
+    setOpen(false);
+    setEditRow(null);
+    reset({ status: 'scheduled' });
   };
 
   const onSubmit = async (formData) => {
@@ -117,7 +123,7 @@ const Conferences = () => {
     try {
       await api.put(`/conferences/${editRow.id}`, formData);
       toast.success('Conference updated successfully');
-      setOpen(false);
+      handleCloseForm();
       refreshAll();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
@@ -232,9 +238,9 @@ const Conferences = () => {
         actions={canUpdateStatus}
       />
 
-      <Dialog open={open} onClose={handleFormDialogClose(() => setOpen(false), submitting)} maxWidth="sm" fullWidth>
+      <Dialog open={open} onClose={handleFormDialogClose(handleCloseForm, submitting)} maxWidth="sm" fullWidth>
         <DialogTitle>Update Conference Status</DialogTitle>
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form key={editRow?.id ?? 'new'} onSubmit={handleSubmit(onSubmit)}>
           <DialogContent>
             <Grid container spacing={2}>
               {editRow && (
@@ -242,7 +248,6 @@ const Conferences = () => {
                   <Controller
                     name="status"
                     control={control}
-                    defaultValue={editRow.status}
                     render={({ field }) => (
                       <TextField
                         fullWidth
@@ -261,7 +266,7 @@ const Conferences = () => {
             </Grid>
           </DialogContent>
           <FormDialogActions
-            onCancel={() => setOpen(false)}
+            onCancel={handleCloseForm}
             submitLabel="Update Status"
             loading={submitting}
           />

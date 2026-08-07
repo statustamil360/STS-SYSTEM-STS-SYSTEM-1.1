@@ -26,7 +26,7 @@ const MedicalNotes = () => {
   useEffect(() => {
     setLoadingPatients(true);
     api.get('/patients', { params: { limit: 100 } })
-      .then(({ data }) => setPatients(data.data))
+      .then(({ data }) => setPatients(data.data ?? []))
       .catch(() => toast.error('Failed to load patients'))
       .finally(() => setLoadingPatients(false));
   }, []);
@@ -38,7 +38,7 @@ const MedicalNotes = () => {
     }
     setLoadingNotes(true);
     api.get(`/patients/${selectedPatient}/notes`)
-      .then(({ data }) => setNotes(data.data))
+      .then(({ data }) => setNotes(data.data ?? []))
       .catch(() => toast.error('Failed to load medical notes'))
       .finally(() => setLoadingNotes(false));
   }, [selectedPatient]);
@@ -55,7 +55,7 @@ const MedicalNotes = () => {
       setOpen(false);
       setNote('');
       const { data } = await api.get(`/patients/${selectedPatient}/notes`);
-      setNotes(data.data);
+      setNotes(data.data ?? []);
     } catch {
       toast.error('Failed to add medical note');
     } finally {

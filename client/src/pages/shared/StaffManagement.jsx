@@ -27,6 +27,7 @@ import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import {
   staffCreateSchema, staffEditSchema, staffPasswordResetSchema,
   receptionistCreateSchema, receptionistEditSchema,
+  staffUpsertSchema, receptionistUpsertSchema,
 } from '../../utils/formSchemas';
 
 const EXTRA_FIELD_ICONS = {
@@ -318,9 +319,10 @@ const createStaffPage = ({
     const [viewRow, setViewRow] = useState(null);
     const [selectOptions, setSelectOptions] = useState({});
 
-    const schema = editRow ? editSchema : createSchema;
+    const upsertSchema = endpoint === '/staff/receptionists' ? receptionistUpsertSchema : staffUpsertSchema;
     const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
-      resolver: yupResolver(schema),
+      resolver: yupResolver(upsertSchema),
+      context: { isEdit: Boolean(editRow) },
     });
 
     const resetPasswordForm = useForm({
@@ -384,6 +386,11 @@ const createStaffPage = ({
       return undefined;
     }, [fieldOptionsEndpoint]);
 
+    const handleCloseForm = () => {
+      setOpen(false);
+      setEditRow(null);
+    };
+
     const handleOpen = (row = null) => {
       setEditRow(row);
       const defaults = {
@@ -445,8 +452,9 @@ const createStaffPage = ({
             createSuccessMessage || `${singular} created successfully`,
             { autoClose: 6000 }
           );
+          setPage(0);
         }
-        setOpen(false);
+        handleCloseForm();
         fetchData();
       } catch (err) {
         const apiMessage = err.response?.data?.message;
@@ -479,6 +487,7 @@ const createStaffPage = ({
         }
         setConfirmOpen(false);
         setPendingDelete(null);
+        if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
         fetchData();
       } catch (err) {
         toast.error(err.response?.data?.message || 'Operation failed');
@@ -584,7 +593,7 @@ const createStaffPage = ({
 
         <Dialog
           open={open}
-          onClose={handleFormDialogClose(() => setOpen(false), submitting)}
+          onClose={handleFormDialogClose(handleCloseForm, submitting)}
           maxWidth="md"
           fullWidth
           scroll="paper"
@@ -810,7 +819,7 @@ const createStaffPage = ({
               </SectionCard>
             </DialogContent>
             <FormDialogActions
-              onCancel={() => setOpen(false)}
+              onCancel={handleCloseForm}
               submitLabel={submitting ? 'Saving...' : editRow ? 'Save Changes' : `Create ${singular}`}
               loading={submitting}
             />
