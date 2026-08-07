@@ -12,9 +12,13 @@
     "migrate:conference": "npm run migrate:conference --prefix server",
     "migrate:timeout": "npm run migrate:timeout --prefix server",
     "seed:demo-meetings": "npm run seed:demo-meetings --prefix server",
-    "build": "npm run build --prefix client"
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "start:prod": "cross-env NODE_ENV=production npm run start --prefix server",
+    "deploy:prepare": "npm run install:all && npm run build"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4"
+    "concurrently": "^10.0.4",
+    "cross-env": "^7.0.3"
   }
 }
