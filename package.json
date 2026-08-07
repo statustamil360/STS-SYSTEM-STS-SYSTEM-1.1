@@ -4,7 +4,8 @@
   "description": "AMC Teleconference Management System",
   "private": true,
   "scripts": {
-    "install:all": "npm install --prefix client && npm install --prefix server",
+    "install:all": "npm install --prefix client --include=dev && npm install --prefix server",
+    "postinstall": "npm run install:all",
     "dev": "concurrently -n server,client -c blue,green \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "npm run dev --prefix client",
     "dev:server": "npm run dev --prefix server",
@@ -12,8 +13,8 @@
     "migrate:conference": "npm run migrate:conference --prefix server",
     "migrate:timeout": "npm run migrate:timeout --prefix server",
     "seed:demo-meetings": "npm run seed:demo-meetings --prefix server",
-    "build": "npm run build --prefix client",
-    "start": "npm run start --prefix server",
+    "build": "npm install --prefix client --include=dev && npm run build --prefix client",
+    "start": "npm install --prefix server --omit=dev && npm run start --prefix server",
     "start:prod": "cross-env NODE_ENV=production npm run start --prefix server",
     "deploy:prepare": "npm run install:all && npm run build"
   },
