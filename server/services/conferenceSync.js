@@ -1,4 +1,4 @@
-const { generateCode } = require('../utils/generateCode');
+const { ensureConferenceSequence, allocateConferenceCode } = require('../utils/conferenceId');
 
 const notifyUser = async (conn, userId, title, message) => {
   await conn.execute(
@@ -102,7 +102,8 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
     return conferenceId;
   }
 
-  const conferenceCode = generateCode('CONF');
+  await ensureConferenceSequence(conn);
+  const conferenceCode = await allocateConferenceCode(conn);
   const meetingLink = `https://meet.amc.com/${conferenceCode.toLowerCase()}`;
 
   const [result] = await conn.execute(

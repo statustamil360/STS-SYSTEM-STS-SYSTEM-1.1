@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { generateCode } = require('../utils/generateCode');
+const { ensureConferenceSequence, allocateConferenceCode } = require('../utils/conferenceId');
 const videoService = require('../services/videoService');
 const { processTimedOutConferences } = require('../services/conferenceTimeoutService');
 
@@ -125,19 +125,40 @@ exports.getAll = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-exports.getToday = async (req, res, next) => {
+const conferenceScheduleBase = `${conferenceSelectBase}
+  LEFT JOIN appointments ap ON c.appointment_id = ap.id`;
+
+// Week starts Monday (mode 1) to match the clinical scheduling week.
+const SCHEDULE_RANGES = {
+  today: 'c.scheduled_date = CURDATE()',
+  tomorrow: 'c.scheduled_date = CURDATE() + INTERVAL 1 DAY',
+  week: 'YEARWEEK(c.scheduled_date, 1) = YEARWEEK(CURDATE(), 1)',
+  month: 'YEAR(c.scheduled_date) = YEAR(CURDATE()) AND MONTH(c.scheduled_date) = MONTH(CURDATE())',
+};
+
+const ACTIVE_CARD_STATUSES = ['scheduled', 'waiting', 'live'];
+
+exports.getSchedule = async (req, res, next) => {
   try {
     await processTimedOutConferences();
-    let query = `${conferenceSelectBase} WHERE c.scheduled_date = CURDATE()
-      AND c.status NOT IN ('cancelled')`;
+    const range = SCHEDULE_RANGES[req.query.range] ? req.query.range : 'today';
+    let query = `${conferenceScheduleBase} WHERE (${SCHEDULE_RANGES[range]})
+      AND c.status NOT IN ('cancelled')
+      AND (c.appointment_id IS NULL OR ap.status IS NULL OR ap.status <> 'cancelled')`;
     const params = [];
+
+    if (range === 'month') {
+      query += ` AND c.status IN (${ACTIVE_CARD_STATUSES.map(() => '?').join(', ')})`;
+      params.push(...ACTIVE_CARD_STATUSES);
+    }
+
     query = await applyRoleFilter(req, query, params);
     query += ` ORDER BY
       CASE c.status WHEN 'live' THEN 0 WHEN 'waiting' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END,
-      c.scheduled_time ASC`;
+      c.scheduled_date ASC, c.scheduled_time ASC`;
     const [rows] = await pool.execute(query, params);
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.json({ success: true, data: rows });
+    res.json({ success: true, data: rows, range });
   } catch (err) { next(err); }
 };
 
@@ -152,12 +173,16 @@ exports.getById = async (req, res, next) => {
 };
 
 exports.create = async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
     const { patient_id, gp_id, ahp_id, scheduled_date, scheduled_time, meeting_link, notes } = req.body;
-    const conferenceCode = generateCode('CONF');
+
+    await ensureConferenceSequence(conn);
+    await conn.beginTransaction();
+    const conferenceCode = await allocateConferenceCode(conn);
     const link = meeting_link || `https://meet.amc.com/${conferenceCode.toLowerCase()}`;
 
-    const [result] = await pool.execute(
+    const [result] = await conn.execute(
       `INSERT INTO conferences (conference_code, patient_id, gp_id, ahp_id, scheduled_date, scheduled_time, meeting_link, notes, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [conferenceCode, patient_id, gp_id || null, ahp_id || null, scheduled_date, scheduled_time, link, notes, req.user.id]
@@ -165,27 +190,33 @@ exports.create = async (req, res, next) => {
 
     const participantIds = [];
     if (gp_id) {
-      const [gpUser] = await pool.execute('SELECT user_id FROM gps WHERE id = ?', [gp_id]);
+      const [gpUser] = await conn.execute('SELECT user_id FROM gps WHERE id = ?', [gp_id]);
       if (gpUser.length) participantIds.push({ userId: gpUser[0].user_id, role: 'gp' });
     }
     if (ahp_id) {
-      const [ahpUser] = await pool.execute('SELECT user_id FROM allied_health_professionals WHERE id = ?', [ahp_id]);
+      const [ahpUser] = await conn.execute('SELECT user_id FROM allied_health_professionals WHERE id = ?', [ahp_id]);
       if (ahpUser.length) participantIds.push({ userId: ahpUser[0].user_id, role: 'ahp' });
     }
 
     for (const p of participantIds) {
-      await pool.execute(
+      await conn.execute(
         'INSERT INTO conference_participants (conference_id, user_id, role_in_conference) VALUES (?, ?, ?)',
         [result.insertId, p.userId, p.role]
       );
-      await pool.execute(
+      await conn.execute(
         'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
         [p.userId, 'Conference Created', `You are invited to conference ${conferenceCode}`, 'conference']
       );
     }
 
+    await conn.commit();
     res.status(201).json({ success: true, message: 'Conference created', data: { id: result.insertId, conference_code: conferenceCode } });
-  } catch (err) { next(err); }
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
 };
 
 exports.update = async (req, res, next) => {

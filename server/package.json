@@ -9,6 +9,8 @@
     "seed": "node database/seed.js",
     "migrate:conference": "node database/migrate-conference-video.js",
     "migrate:timeout": "node database/migrate-conference-timeout.js",
+    "migrate:appointment-ids": "node database/migrate-appointment-ids.js",
+    "migrate:conference-ids": "node database/migrate-conference-ids.js",
     "seed:demo-meetings": "node database/seed-demo-meetings.js"
   },
   "keywords": [],

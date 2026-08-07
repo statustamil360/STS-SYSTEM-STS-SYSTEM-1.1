@@ -1,5 +1,6 @@
+const fs = require('fs');
 const pool = require('../config/db');
-const { generateCode } = require('../utils/generateCode');
+const { ensureAppointmentSequence, allocateAppointmentCode } = require('../utils/appointmentId');
 const path = require('path');
 const { uploadDir } = require('../config/jwt');
 const { syncConferenceFromAppointment, cancelConferenceForAppointment } = require('../services/conferenceSync');
@@ -185,8 +186,9 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Patient, GP, and title are required' });
     }
 
+    await ensureAppointmentSequence(conn);
     await conn.beginTransaction();
-    const appointmentCode = generateCode('APT');
+    const appointmentCode = await allocateAppointmentCode(conn);
     const firstAhpId = ahpAssignments.length ? ahpAssignments[0].ahp_id : null;
 
     const [result] = await conn.execute(
@@ -357,6 +359,62 @@ exports.remove = async (req, res, next) => {
   } finally {
     conn.release();
   }
+};
+
+const MIME_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
+const resolveFilePath = (filePath) => {
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.join(__dirname, '..', filePath);
+};
+
+const resolveMimeType = (file) => {
+  if (file.mime_type) return file.mime_type;
+  const ext = path.extname(file.original_name || file.stored_name || '').toLowerCase();
+  return MIME_BY_EXT[ext] || 'application/octet-stream';
+};
+
+exports.viewFile = async (req, res, next) => {
+  try {
+    const { id, fileId } = req.params;
+    const [rows] = await pool.execute(
+      `SELECT f.original_name, f.stored_name, f.file_path, f.mime_type
+       FROM appointment_files f
+       JOIN appointments a ON f.appointment_id = a.id
+       WHERE f.id = ? AND a.id = ?`,
+      [fileId, id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    const file = rows[0];
+    const absolutePath = resolveFilePath(file.file_path);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ success: false, message: 'File not found on disk' });
+    }
+
+    const mimeType = resolveMimeType(file);
+    const safeName = String(file.original_name || file.stored_name || 'attachment').replace(/"/g, '');
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    res.sendFile(absolutePath);
+  } catch (err) { next(err); }
 };
 
 exports.removeFile = async (req, res, next) => {

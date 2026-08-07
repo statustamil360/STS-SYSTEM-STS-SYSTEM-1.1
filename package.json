@@ -12,6 +12,8 @@
     "seed": "npm run seed --prefix server",
     "migrate:conference": "npm run migrate:conference --prefix server",
     "migrate:timeout": "npm run migrate:timeout --prefix server",
+    "migrate:appointment-ids": "npm run migrate:appointment-ids --prefix server",
+    "migrate:conference-ids": "npm run migrate:conference-ids --prefix server",
     "seed:demo-meetings": "npm run seed:demo-meetings --prefix server",
     "build": "npm install --prefix client --include=dev && npm run build --prefix client",
     "start": "npm install --prefix server --omit=dev && npm run start --prefix server",
