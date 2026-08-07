@@ -17,6 +17,7 @@ const Conferences = lazy(() => import('../pages/shared/Conferences'));
 const ConferenceRoom = lazy(() => import('../pages/shared/ConferenceRoom'));
 const Tasks = lazy(() => import('../pages/shared/Tasks'));
 const Appointments = lazy(() => import('../pages/shared/Appointments'));
+const AppointmentFilePreview = lazy(() => import('../pages/shared/AppointmentFilePreview'));
 const Reports = lazy(() => import('../pages/shared/Reports'));
 const Settings = lazy(() => import('../pages/shared/Settings'));
 const Preferences = lazy(() => import('../pages/shared/Preferences'));
@@ -90,6 +91,10 @@ const AppRoutes = () => (
           <Route element={<ProtectedRoute allowedRoles={[ROLES.AHP]} />}>
             <Route path="/patient-reports" element={<PatientReports />} />
           </Route>
+        </Route>
+
+        <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST]} />}>
+          <Route path="/appointments/:appointmentId/files/:fileId/preview" element={<AppointmentFilePreview />} />
         </Route>
       </Route>
 

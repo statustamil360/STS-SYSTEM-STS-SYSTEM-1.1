@@ -9,7 +9,8 @@ router.use(authenticate);
 
 const clinicalRoles = ['receptionist', 'gp', 'ahp', 'admin', 'super_admin'];
 
-router.get('/today', authorize(...clinicalRoles), conferenceController.getToday);
+router.get('/today', authorize(...clinicalRoles), conferenceController.getSchedule);
+router.get('/schedule', authorize(...clinicalRoles), conferenceController.getSchedule);
 router.get('/', authorize(...clinicalRoles), conferenceController.getAll);
 router.get('/:id', authorize(...clinicalRoles), conferenceController.getById);
 router.post('/', authorize('receptionist'), [

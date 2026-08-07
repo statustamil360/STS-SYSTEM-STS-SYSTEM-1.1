@@ -9,6 +9,7 @@ const router = express.Router();
 router.use(authenticate, authorize('receptionist', 'admin', 'super_admin'));
 
 router.get('/', appointmentController.getAll);
+router.get('/:id/files/:fileId/view', appointmentController.viewFile);
 router.get('/:id', appointmentController.getById);
 router.post('/', upload.array('files', 20), [
   body('patient_id').toInt().isInt({ min: 1 }).withMessage('Patient is required'),

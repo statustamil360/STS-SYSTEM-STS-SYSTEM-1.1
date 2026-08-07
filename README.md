@@ -150,7 +150,13 @@ This runs `server/database/seed.js`, which:
 npm run migrate:conference
 ```
 
-5. **If today's meeting cards are empty**, refresh demo sample data:
+5. Renumber appointment IDs into the sequential `APT-0001` format (run once on existing data):
+
+```bash
+npm run migrate:appointment-ids
+```
+
+6. **If today's meeting cards are empty**, refresh demo sample data:
 
 ```bash
 npm run seed:demo-meetings

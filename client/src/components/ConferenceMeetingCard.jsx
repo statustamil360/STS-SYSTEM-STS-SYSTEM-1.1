@@ -1,20 +1,61 @@
+import { useMemo } from 'react';
 import {
-  Box, Card, CardContent, Typography, Button, Chip, Stack, CircularProgress,
+  Box, Card, Typography, Button, Chip, Stack, CircularProgress, Tooltip,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
-  AccessTimeOutlined, PersonOutlined, VideoCallOutlined, CheckCircleOutlined,
+  AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { useCountdown } from '../hooks/useCountdown';
+import { useCountdown, getMeetingDateTime } from '../hooks/useCountdown';
 import { ROLES, STATUS_COLORS } from '../utils/constants';
+import { formatClockTime } from '../utils/dateTime';
 import api from '../services/api';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
-const ConferenceMeetingCard = ({ conference, userRole, onRefresh, accepting, joining, setAccepting, setJoining, isNextUp = false }) => {
+const MINUTE_MS = 60000;
+
+const URGENCY_TIERS = [
+  { id: 'critical', withinMs: 15 * MINUTE_MS, palette: 'error', pulse: true },
+  { id: 'soon', withinMs: 60 * MINUTE_MS, palette: 'warning', pulse: false },
+  { id: 'approaching', withinMs: 180 * MINUTE_MS, palette: 'success', pulse: false },
+  { id: 'ahead', withinMs: Number.POSITIVE_INFINITY, palette: 'info', pulse: false },
+];
+
+const CLOSED_TIER = { id: 'closed', palette: null, pulse: false };
+
+const resolveTier = ({ diffMs, isLive, isCompleted }) => {
+  if (isCompleted) return CLOSED_TIER;
+  if (isLive) return URGENCY_TIERS[0];
+  return URGENCY_TIERS.find((tier) => diffMs <= tier.withinMs);
+};
+
+const getTone = (theme, tier) => {
+  if (!tier.palette) {
+    return { base: theme.palette.divider, sheen: theme.palette.divider, accent: theme.palette.text.disabled };
+  }
+  const color = theme.palette[tier.palette];
+  return { base: color.main, sheen: color.light, accent: color.main };
+};
+
+const formatMeetingDay = (date) => {
+  const parsed = getMeetingDateTime(date, '00:00');
+  if (!parsed) return date || '—';
+  return parsed.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+};
+
+const truncate = (value, max = 28) => {
+  if (!value) return '—';
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+};
+
+const ConferenceMeetingCard = ({
+  conference, userRole, onRefresh, accepting, joining, setAccepting, setJoining, isNextUp = false,
+}) => {
   const navigate = useNavigate();
+  const theme = useTheme();
   const countdown = useCountdown(conference.scheduled_date, conference.scheduled_time);
   const isGp = userRole === ROLES.GP;
   const isAhp = userRole === ROLES.AHP;
@@ -25,6 +66,14 @@ const ConferenceMeetingCard = ({ conference, userRole, onRefresh, accepting, joi
   const canJoinGp = isGp && (isLive || countdown.started) && !isCompleted;
   const canJoinAhp = isAhp && isLive && !isCompleted;
   const waitingForGp = isAhp && !isLive && !isCompleted;
+
+  const tier = useMemo(
+    () => resolveTier({ diffMs: countdown.diffMs, isLive, isCompleted }),
+    [countdown.diffMs, isLive, isCompleted]
+  );
+  const tone = useMemo(() => getTone(theme, tier), [theme, tier]);
+  const statusColor = STATUS_COLORS[conference.status] || 'default';
+  const ahpName = conference.ahp_participants || conference.ahp_name;
 
   const goToRoom = (data) => {
     navigate(`/conferences/${conference.id}/room`, {
@@ -65,144 +114,237 @@ const ConferenceMeetingCard = ({ conference, userRole, onRefresh, accepting, joi
     }
   };
 
-  const statusColor = STATUS_COLORS[conference.status] || 'default';
-
   return (
-    <Card
-      elevation={0}
+    <Box
       sx={{
-        borderRadius: 3,
-        border: '1px solid',
-        borderColor: isLive ? 'success.main' : 'divider',
-        bgcolor: (theme) => (isLive ? alpha(theme.palette.success.main, 0.04) : 'background.paper'),
-        transition: 'border-color 200ms ease, box-shadow 200ms ease',
-        '&:hover': {
-          boxShadow: (theme) => theme.shadows[4],
+        position: 'relative',
+        height: '100%',
+        p: '1.5px',
+        borderRadius: '14px',
+        overflow: 'hidden',
+        isolation: 'isolate',
+        transition: 'transform 200ms ease, box-shadow 200ms ease',
+        ...(tier.pulse && { animation: 'confCardPulse 2.2s ease-in-out infinite' }),
+        '&:hover': { transform: 'translateY(-2px)' },
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          width: '240%',
+          aspectRatio: '1 / 1',
+          zIndex: 0,
+          transform: 'translate(-50%, -50%)',
+          background: `conic-gradient(from 0deg, ${tone.base} 0deg, ${tone.base} 195deg, ${tone.sheen} 255deg, #FFFFFF 278deg, ${tone.sheen} 305deg, ${tone.base} 352deg, ${tone.base} 360deg)`,
+          animation: 'confRingSpin 5s linear infinite',
+        },
+        '@keyframes confRingSpin': {
+          to: { transform: 'translate(-50%, -50%) rotate(360deg)' },
+        },
+        '@keyframes confCardPulse': {
+          '0%, 100%': { boxShadow: `0 0 0 0 ${alpha(tone.base, 0.22)}` },
+          '50%': { boxShadow: `0 0 0 6px ${alpha(tone.base, 0)}` },
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          animation: 'none',
+          '&::before': { animation: 'none' },
         },
       }}
     >
-      <CardContent sx={{ p: 2.5 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Box>
-            <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 1 }}>
+      <Card
+        elevation={0}
+        sx={{
+          position: 'relative',
+          zIndex: 1,
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          border: 'none',
+          borderRadius: '12px',
+          bgcolor: 'background.paper',
+          backgroundImage: `linear-gradient(160deg, ${alpha(tone.base, 0.06)} 0%, transparent 55%)`,
+          boxShadow: `0 4px 16px ${alpha(theme.palette.common.black, 0.06)}`,
+        }}
+      >
+        <Box sx={{ px: 1.5, pt: 1.5, pb: 1.25, display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+          {/* Header */}
+          <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 700,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                color: 'primary.main',
+                letterSpacing: '0.02em',
+              }}
+            >
               {conference.conference_code}
             </Typography>
-            <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.3 }}>
+            <Stack direction="row" spacing={0.4}>
+              {isNextUp && !isCompleted && (
+                <Chip label="Next" color="primary" size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }} />
+              )}
+              <Chip
+                label={formatLabel(conference.status)}
+                color={statusColor}
+                size="small"
+                sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }}
+              />
+            </Stack>
+          </Stack>
+
+          <Tooltip title={conference.patient_name || ''} placement="top">
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+                lineHeight: 1.25,
+                mb: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {conference.patient_name}
             </Typography>
-          </Box>
-          <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
-            {isNextUp && !isCompleted && (
-              <Chip label="Next up" color="primary" size="small" sx={{ fontWeight: 700 }} />
-            )}
-            <Chip
-              label={formatLabel(conference.status)}
-              color={statusColor}
-              size="small"
-              sx={{ fontWeight: 600, textTransform: 'capitalize' }}
-            />
-          </Stack>
-        </Stack>
+          </Tooltip>
 
-        <Box
-          sx={{
-            textAlign: 'center',
-            py: 2,
-            px: 1,
-            mb: 2,
-            borderRadius: 2.5,
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-          }}
-        >
-          <AccessTimeOutlined sx={{ color: 'primary.main', mb: 0.5 }} />
-          <Typography variant="caption" color="text.secondary" display="block">
-            {countdown.prefix}
-          </Typography>
-          <Typography
-            variant="h4"
-            fontWeight={800}
-            color={countdown.started ? 'warning.main' : 'primary.main'}
-            sx={{ fontVariantNumeric: 'tabular-nums', letterSpacing: 1 }}
+          {/* Countdown + schedule — side by side */}
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 0.75,
+              mb: 1,
+              p: 1,
+              borderRadius: '10px',
+              border: '1px solid',
+              borderColor: alpha(tone.base, 0.2),
+              bgcolor: alpha(tone.base, 0.05),
+            }}
           >
-            {countdown.displayTime}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={0.5}>
-            {conference.scheduled_date} · {conference.scheduled_time?.slice(0, 5)}
-          </Typography>
+            <Box>
+              <Stack direction="row" spacing={0.4} sx={{ alignItems: 'center', mb: 0.25 }}>
+                <AccessTimeOutlined sx={{ fontSize: 12, color: tone.accent }} />
+                <Typography
+                  variant="caption"
+                  sx={{ color: tone.accent, fontWeight: 700, fontSize: '0.6rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}
+                >
+                  {isCompleted ? formatLabel(conference.status) : countdown.prefix}
+                </Typography>
+              </Stack>
+              <Typography
+                sx={{
+                  fontWeight: 800,
+                  fontSize: '1rem',
+                  lineHeight: 1.1,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: isCompleted ? 'text.disabled' : tone.accent,
+                }}
+              >
+                {isCompleted ? '—' : countdown.displayTime}
+              </Typography>
+            </Box>
+            <Box sx={{ textAlign: 'right', alignSelf: 'center' }}>
+              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontWeight: 600, fontSize: '0.7rem' }}>
+                {formatMeetingDay(conference.scheduled_date)}
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', color: 'text.primary', fontWeight: 700, fontSize: '0.75rem' }}>
+                {formatClockTime(conference.scheduled_time)}
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Participants — compact */}
+          <Stack spacing={0.35} sx={{ mb: 1, flexGrow: 1 }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', lineHeight: 1.35 }} noWrap>
+              <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>GP:</Box>
+              {' '}{truncate(conference.gp_name, 22)}
+            </Typography>
+            <Tooltip title={ahpName || ''} placement="bottom">
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>AHP:</Box>
+                {' '}{truncate(ahpName, 22)}
+              </Typography>
+            </Tooltip>
+          </Stack>
+
+          {/* Action */}
+          <Box sx={{ mt: 'auto' }}>
+            {isClinical ? (
+              <>
+                {canAccept && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    color="success"
+                    startIcon={accepting === conference.id ? <CircularProgress size={14} color="inherit" /> : <CheckCircleOutlined sx={{ fontSize: 16 }} />}
+                    disabled={accepting === conference.id}
+                    onClick={handleAccept}
+                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
+                  >
+                    Accept & Join
+                  </Button>
+                )}
+                {(canJoinGp && !canAccept) && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    startIcon={joining === conference.id ? <CircularProgress size={14} color="inherit" /> : <VideoCallOutlined sx={{ fontSize: 16 }} />}
+                    disabled={joining === conference.id}
+                    onClick={handleJoin}
+                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
+                  >
+                    Join
+                  </Button>
+                )}
+                {canJoinAhp && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    startIcon={joining === conference.id ? <CircularProgress size={14} color="inherit" /> : <VideoCallOutlined sx={{ fontSize: 16 }} />}
+                    disabled={joining === conference.id}
+                    onClick={handleJoin}
+                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
+                  >
+                    Join
+                  </Button>
+                )}
+                {waitingForGp && (
+                  <Button fullWidth size="small" variant="outlined" disabled sx={{ py: 0.55, fontSize: '0.68rem', borderRadius: '8px' }}>
+                    Awaiting GP
+                  </Button>
+                )}
+                {isCompleted && (
+                  <Button fullWidth size="small" variant="outlined" disabled sx={{ py: 0.55, fontSize: '0.68rem', borderRadius: '8px' }}>
+                    {conference.status === 'cancelled' ? 'Cancelled' : 'Ended'}
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Box
+                sx={{
+                  py: 0.55,
+                  px: 1,
+                  borderRadius: '8px',
+                  textAlign: 'center',
+                  border: '1px solid',
+                  borderColor: alpha(tone.base, 0.22),
+                  bgcolor: alpha(tone.base, 0.05),
+                }}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 600, color: tone.accent, fontSize: '0.68rem' }}>
+                  {isLive ? 'In progress' : 'Awaiting GP acceptance'}
+                </Typography>
+              </Box>
+            )}
+          </Box>
         </Box>
-
-        <Stack spacing={1} mb={2.5}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <PersonOutlined sx={{ fontSize: 18, color: 'text.secondary' }} />
-            <Typography variant="body2">
-              <strong>GP:</strong> {conference.gp_name || '—'}
-            </Typography>
-          </Stack>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <PersonOutlined sx={{ fontSize: 18, color: 'text.secondary' }} />
-            <Typography variant="body2">
-              <strong>AHP:</strong> {conference.ahp_participants || conference.ahp_name || '—'}
-            </Typography>
-          </Stack>
-        </Stack>
-
-        {isClinical ? (
-          <Stack direction="row" spacing={1}>
-            {canAccept && (
-              <Button
-                fullWidth
-                variant="contained"
-                color="success"
-                startIcon={accepting === conference.id ? <CircularProgress size={18} color="inherit" /> : <CheckCircleOutlined />}
-                disabled={accepting === conference.id}
-                onClick={handleAccept}
-              >
-                Accept & Join
-              </Button>
-            )}
-            {canJoinGp && !canAccept && (
-              <Button
-                fullWidth
-                variant="contained"
-                startIcon={joining === conference.id ? <CircularProgress size={18} color="inherit" /> : <VideoCallOutlined />}
-                disabled={joining === conference.id}
-                onClick={handleJoin}
-              >
-                Join Meeting
-              </Button>
-            )}
-            {canJoinAhp && (
-              <Button
-                fullWidth
-                variant="contained"
-                startIcon={joining === conference.id ? <CircularProgress size={18} color="inherit" /> : <VideoCallOutlined />}
-                disabled={joining === conference.id}
-                onClick={handleJoin}
-              >
-                Join Meeting
-              </Button>
-            )}
-            {waitingForGp && (
-              <Button fullWidth variant="outlined" disabled>
-                Waiting for GP to accept
-              </Button>
-            )}
-            {isCompleted && (
-              <Button fullWidth variant="outlined" disabled>
-                {conference.status === 'cancelled' ? 'Cancelled' : 'Meeting ended'}
-              </Button>
-            )}
-          </Stack>
-        ) : (
-          <Chip
-            label={isLive ? 'Meeting in progress' : 'Scheduled — awaiting GP acceptance'}
-            color={isLive ? 'success' : 'default'}
-            variant="outlined"
-            sx={{ width: '100%' }}
-          />
-        )}
-      </CardContent>
-    </Card>
+      </Card>
+    </Box>
   );
 };
 

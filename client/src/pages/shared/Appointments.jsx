@@ -8,7 +8,9 @@ import {
   EventOutlined, PersonOutlined, CalendarTodayOutlined, AccessTimeOutlined,
   NotesOutlined, InfoOutlined, MedicalServicesOutlined, HealthAndSafetyOutlined,
   AddOutlined, DeleteOutlined, TitleOutlined, WarningAmberOutlined, CommentOutlined,
-  DescriptionOutlined, AttachFileOutlined, VideoCallOutlined,
+  DescriptionOutlined, AttachFileOutlined, VideoCallOutlined, BadgeOutlined,
+  ScheduleOutlined, EventAvailableOutlined, FolderOutlined, InsertDriveFileOutlined,
+  CheckCircleOutlined,
 } from '@mui/icons-material';
 import { useForm } from 'react-hook-form';
 import { toast } from 'react-toastify';
@@ -21,6 +23,9 @@ import {
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
 import { formatDateInput, formatTimeInput } from '../../utils/crudHelpers';
+import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
+import { STATUS_COLORS } from '../../utils/constants';
+import { openAppointmentFilePreview } from '../../utils/filePreview';
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'];
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
@@ -40,10 +45,107 @@ const defaultFormValues = {
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
-const DetailRow = ({ label, value }) => (
-  <Box sx={{ py: 0.75 }}>
-    <Typography variant="caption" color="text.secondary" display="block">{label}</Typography>
-    <Typography variant="body2" fontWeight={500}>{value || '—'}</Typography>
+const DetailItem = ({ icon: Icon, label, value, span = 6, mono = false }) => (
+  <Grid size={{ xs: 12, sm: span }}>
+    <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
+      <Box
+        sx={{
+          width: 32,
+          height: 32,
+          flexShrink: 0,
+          borderRadius: '10px',
+          display: 'grid',
+          placeItems: 'center',
+          color: 'primary.main',
+          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+        }}
+      >
+        <Icon sx={{ fontSize: 17 }} />
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography
+          variant="caption"
+          sx={{
+            display: 'block',
+            color: 'text.secondary',
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {label}
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 600,
+            wordBreak: 'break-word',
+            ...(mono && {
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              letterSpacing: '0.02em',
+            }),
+          }}
+        >
+          {value || '—'}
+        </Typography>
+      </Box>
+    </Stack>
+  </Grid>
+);
+
+const NotePanel = ({ icon: Icon, label, value, tone = 'primary' }) => (
+  <Grid size={{ xs: 12 }}>
+    <Box
+      sx={{
+        p: 2,
+        borderRadius: '14px',
+        border: '1px solid',
+        borderColor: (theme) => alpha(theme.palette[tone].main, 0.24),
+        bgcolor: (theme) => alpha(theme.palette[tone].main, 0.05),
+      }}
+    >
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.75 }}>
+        <Icon sx={{ fontSize: 17, color: `${tone}.main` }} />
+        <Typography
+          variant="caption"
+          sx={{
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            color: `${tone}.main`,
+          }}
+        >
+          {label}
+        </Typography>
+      </Stack>
+      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{value}</Typography>
+    </Box>
+  </Grid>
+);
+
+const HeroStat = ({ icon: Icon, label, value }) => (
+  <Box
+    sx={{
+      px: 1.75,
+      py: 1.5,
+      borderRadius: '12px',
+      bgcolor: alpha('#FFFFFF', 0.14),
+      border: '1px solid',
+      borderColor: alpha('#FFFFFF', 0.18),
+    }}
+  >
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', mb: 0.5 }}>
+      <Icon sx={{ fontSize: 15, opacity: 0.85 }} />
+      <Typography
+        variant="caption"
+        sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.85 }}
+      >
+        {label}
+      </Typography>
+    </Stack>
+    <Typography variant="subtitle2" sx={{ fontWeight: 700, wordBreak: 'break-word' }}>
+      {value || '—'}
+    </Typography>
   </Box>
 );
 
@@ -335,11 +437,11 @@ const Appointments = () => {
   const columns = [
     { field: 'appointment_code', headerName: 'ID', render: (r) => r.appointment_code || `#${r.id}` },
     { field: 'patient_name', headerName: 'Patient' },
+    { field: 'title', headerName: 'Title', render: (r) => r.title || '—' },
+    { field: 'appointment_date', headerName: 'Date', render: (r) => formatCalendarDate(r.appointment_date) },
+    { field: 'appointment_time', headerName: 'Time', render: (r) => formatClockTime(r.appointment_time) },
     { field: 'gp_name', headerName: 'GP', render: (r) => r.gp_name || '—' },
     { field: 'ahp_summary', headerName: 'AHPs', render: (r) => r.ahp_summary || '—' },
-    { field: 'title', headerName: 'Title', render: (r) => r.title || '—' },
-    { field: 'appointment_date', headerName: 'Date' },
-    { field: 'appointment_time', headerName: 'Time', render: (r) => r.appointment_time?.slice?.(0, 5) || r.appointment_time || '—' },
     { field: 'status', headerName: 'Status', type: 'status' },
   ];
 
@@ -636,9 +738,7 @@ const Appointments = () => {
                           <ListItemSecondaryAction>
                             <Button
                               size="small"
-                              href={`${API_BASE}${file.url || `/uploads/${file.stored_name}`}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              onClick={() => openAppointmentFilePreview(editRow.id, file.id)}
                               sx={{ mr: 1 }}
                             >
                               View
@@ -721,71 +821,259 @@ const Appointments = () => {
             <Typography color="text.secondary" py={4} textAlign="center">Loading details...</Typography>
           ) : viewData ? (
             <>
-              <SectionCard title="Appointment" icon={EventOutlined}>
-                <Grid container spacing={2}>
-                  <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Appointment ID" value={viewData.appointment_code || `#${viewData.id}`} /></Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Status" value={formatLabel(viewData.status)} /></Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Patient" value={viewData.patient_name} /></Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="GP" value={viewData.gp_name} /></Grid>
-                  <Grid size={{ xs: 12 }}><DetailRow label="AHP Assignments" value={viewData.ahp_summary} /></Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Title" value={viewData.title} /></Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}>
-                    <DetailRow
-                      label="Date & Time"
-                      value={`${viewData.appointment_date?.slice?.(0, 10) || viewData.appointment_date} ${viewData.appointment_time?.slice?.(0, 5) || ''}`}
-                    />
-                  </Grid>
-                  {viewData.cancelled_reason && (
-                    <Grid size={{ xs: 12 }}>
-                      <Chip label={`Cancel reason: ${viewData.cancelled_reason}`} color="error" variant="outlined" />
-                    </Grid>
-                  )}
-                  {viewData.important_note && <Grid size={{ xs: 12 }}><DetailRow label="Important Note" value={viewData.important_note} /></Grid>}
-                  {viewData.comments && <Grid size={{ xs: 12 }}><DetailRow label="Comments" value={viewData.comments} /></Grid>}
-                  {viewData.notes && <Grid size={{ xs: 12 }}><DetailRow label="Notes" value={viewData.notes} /></Grid>}
-                </Grid>
+              <Box
+                sx={{
+                  position: 'relative',
+                  overflow: 'hidden',
+                  mb: 2.5,
+                  p: { xs: 2.5, sm: 3 },
+                  borderRadius: 2.5,
+                  color: 'common.white',
+                  background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 58%, ${theme.palette.primary.light} 100%)`,
+                  boxShadow: '0 14px 34px rgba(15, 23, 42, 0.22)',
+                  '&::after': {
+                    content: '""',
+                    position: 'absolute',
+                    top: -60,
+                    right: -40,
+                    width: 190,
+                    height: 190,
+                    borderRadius: '50%',
+                    bgcolor: alpha('#FFFFFF', 0.06),
+                  },
+                }}
+              >
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={1.5}
+                  sx={{ position: 'relative', justifyContent: 'space-between', alignItems: { sm: 'flex-start' } }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.8 }}
+                    >
+                      Appointment ID
+                    </Typography>
+                    <Typography
+                      variant="h4"
+                      sx={{
+                        fontWeight: 800,
+                        lineHeight: 1.15,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        letterSpacing: '0.02em',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {viewData.appointment_code || `#${viewData.id}`}
+                    </Typography>
+                    {viewData.title && (
+                      <Typography variant="body2" sx={{ mt: 0.75, opacity: 0.9 }}>
+                        {viewData.title}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Chip
+                    label={formatLabel(viewData.status)}
+                    color={STATUS_COLORS[viewData.status] || 'default'}
+                    sx={{ fontWeight: 700, flexShrink: 0 }}
+                  />
+                </Stack>
+
+                <Box
+                  sx={{
+                    position: 'relative',
+                    mt: 2.5,
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
+                    gap: 1.5,
+                  }}
+                >
+                  <HeroStat
+                    icon={CalendarTodayOutlined}
+                    label="Date"
+                    value={formatCalendarDate(viewData.appointment_date)}
+                  />
+                  <HeroStat
+                    icon={ScheduleOutlined}
+                    label="Time"
+                    value={formatClockTime(viewData.appointment_time)}
+                  />
+                  <HeroStat
+                    icon={BadgeOutlined}
+                    label="Patient ID"
+                    value={viewData.patient_code}
+                  />
+                </Box>
+              </Box>
+
+              <SectionCard title="Patient & Care Team" icon={PersonOutlined}>
+                <DetailItem icon={PersonOutlined} label="Patient" value={viewData.patient_name} />
+                <DetailItem icon={BadgeOutlined} label="Patient ID" value={viewData.patient_code} mono />
+                <DetailItem icon={MedicalServicesOutlined} label="General Practitioner" value={viewData.gp_name} />
+                <DetailItem icon={BadgeOutlined} label="GP ID" value={viewData.gp_code} mono />
+                <DetailItem
+                  icon={HealthAndSafetyOutlined}
+                  label="AHP Assignments"
+                  value={viewData.ahp_summary}
+                  span={12}
+                />
               </SectionCard>
+
+              <SectionCard title="Schedule" icon={EventAvailableOutlined}>
+                <DetailItem
+                  icon={CalendarTodayOutlined}
+                  label="Date"
+                  value={formatCalendarDate(viewData.appointment_date)}
+                />
+                <DetailItem
+                  icon={ScheduleOutlined}
+                  label="Time"
+                  value={formatClockTime(viewData.appointment_time)}
+                />
+                <DetailItem icon={TitleOutlined} label="Title" value={viewData.title} />
+                <DetailItem icon={InfoOutlined} label="Status" value={formatLabel(viewData.status)} />
+                {viewData.cancelled_reason && (
+                  <NotePanel
+                    icon={WarningAmberOutlined}
+                    label="Cancellation Reason"
+                    value={viewData.cancelled_reason}
+                    tone="error"
+                  />
+                )}
+              </SectionCard>
+
+              {(viewData.important_note || viewData.comments || viewData.notes
+                || viewData.patient_previous_records) && (
+                <SectionCard title="Notes & Records" icon={NotesOutlined}>
+                  {viewData.important_note && (
+                    <NotePanel
+                      icon={WarningAmberOutlined}
+                      label="Important Note"
+                      value={viewData.important_note}
+                      tone="warning"
+                    />
+                  )}
+                  {viewData.comments && (
+                    <NotePanel icon={CommentOutlined} label="Comments" value={viewData.comments} />
+                  )}
+                  {viewData.patient_previous_records && (
+                    <NotePanel
+                      icon={DescriptionOutlined}
+                      label="Patient Previous Records"
+                      value={viewData.patient_previous_records}
+                    />
+                  )}
+                  {viewData.notes && (
+                    <NotePanel icon={NotesOutlined} label="Internal Notes" value={viewData.notes} />
+                  )}
+                </SectionCard>
+              )}
+
+              {viewData.files?.length > 0 && (
+                <SectionCard title="Attachments" icon={FolderOutlined}>
+                  <Grid size={{ xs: 12 }}>
+                    <Stack spacing={1}>
+                      {viewData.files.map((file) => (
+                        <Stack
+                          key={file.id}
+                          direction="row"
+                          spacing={1.5}
+                          sx={{
+                            alignItems: 'center',
+                            p: 1.25,
+                            borderRadius: '12px',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: 'background.default',
+                          }}
+                        >
+                          <InsertDriveFileOutlined sx={{ fontSize: 20, color: 'primary.main', flexShrink: 0 }} />
+                          <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                              {file.original_name}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              {file.file_size ? `${Math.round(file.file_size / 1024)} KB` : 'Attached file'}
+                            </Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => openAppointmentFilePreview(viewData.id, file.id)}
+                            sx={{ flexShrink: 0 }}
+                          >
+                            Open
+                          </Button>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Grid>
+                </SectionCard>
+              )}
 
               <SectionCard title="Linked Conference" icon={VideoCallOutlined}>
                 {viewData.conference ? (
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Conference ID" value={viewData.conference.conference_code} /></Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Conference Status" value={formatLabel(viewData.conference.status)} /></Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="Patient" value={viewData.conference.patient_name} /></Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}><DetailRow label="GP" value={viewData.conference.gp_name} /></Grid>
-                    <Grid size={{ xs: 12 }}><DetailRow label="Participants" value={viewData.conference.participants || viewData.conference.ahp_name} /></Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <DetailRow
-                        label="Scheduled"
-                        value={`${viewData.conference.scheduled_date} ${viewData.conference.scheduled_time?.slice(0, 5)}`}
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <DetailRow
-                        label="Accepted At"
-                        value={viewData.conference.accepted_at ? new Date(viewData.conference.accepted_at).toLocaleString() : 'Not accepted'}
-                      />
-                    </Grid>
+                  <>
+                    <DetailItem
+                      icon={VideoCallOutlined}
+                      label="Conference ID"
+                      value={viewData.conference.conference_code}
+                      mono
+                    />
+                    <DetailItem
+                      icon={InfoOutlined}
+                      label="Conference Status"
+                      value={formatLabel(viewData.conference.status)}
+                    />
+                    <DetailItem
+                      icon={CalendarTodayOutlined}
+                      label="Scheduled Date"
+                      value={formatCalendarDate(viewData.conference.scheduled_date)}
+                    />
+                    <DetailItem
+                      icon={ScheduleOutlined}
+                      label="Scheduled Time"
+                      value={formatClockTime(viewData.conference.scheduled_time)}
+                    />
+                    <DetailItem
+                      icon={PersonOutlined}
+                      label="Participants"
+                      value={viewData.conference.participants || viewData.conference.ahp_name}
+                      span={12}
+                    />
+                    <DetailItem
+                      icon={CheckCircleOutlined}
+                      label="Accepted At"
+                      value={viewData.conference.accepted_at
+                        ? new Date(viewData.conference.accepted_at).toLocaleString()
+                        : 'Not accepted yet'}
+                      span={12}
+                    />
                     {viewData.conference.cancelled_reason && (
-                      <Grid size={{ xs: 12 }}>
-                        <Chip
-                          label={`Conference cancelled: ${viewData.conference.cancelled_reason}`}
-                          color="error"
-                          sx={{ fontWeight: 600 }}
-                        />
-                        {viewData.conference.cancelled_at && (
-                          <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
-                            Cancelled at {new Date(viewData.conference.cancelled_at).toLocaleString()}
-                          </Typography>
-                        )}
-                      </Grid>
+                      <NotePanel
+                        icon={WarningAmberOutlined}
+                        label="Conference Cancelled"
+                        value={viewData.conference.cancelled_at
+                          ? `${viewData.conference.cancelled_reason} — ${new Date(viewData.conference.cancelled_at).toLocaleString()}`
+                          : viewData.conference.cancelled_reason}
+                        tone="error"
+                      />
                     )}
                     {viewData.conference.notes && (
-                      <Grid size={{ xs: 12 }}><DetailRow label="Conference Notes" value={viewData.conference.notes} /></Grid>
+                      <NotePanel
+                        icon={NotesOutlined}
+                        label="Conference Notes"
+                        value={viewData.conference.notes}
+                      />
                     )}
-                  </Grid>
+                  </>
                 ) : (
-                  <Typography color="text.secondary">No linked conference found for this appointment.</Typography>
+                  <Grid size={{ xs: 12 }}>
+                    <Typography color="text.secondary">
+                      No linked conference found for this appointment.
+                    </Typography>
+                  </Grid>
                 )}
               </SectionCard>
             </>

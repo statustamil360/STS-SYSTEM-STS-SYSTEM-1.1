@@ -4,9 +4,11 @@ const pad = (n) => String(Math.max(0, n)).padStart(2, '0');
 
 export const formatDuration = (ms) => {
   const abs = Math.abs(ms);
-  const hours = Math.floor(abs / 3600000);
+  const days = Math.floor(abs / 86400000);
+  const hours = Math.floor((abs % 86400000) / 3600000);
   const minutes = Math.floor((abs % 3600000) / 60000);
   const seconds = Math.floor((abs % 60000) / 1000);
+  if (days > 0) return `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
   return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 };
 
