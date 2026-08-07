@@ -48,10 +48,18 @@ Do **not** commit or upload `server/.env` — create it on the server.
 
 ```bash
 cd /path/to/amc-teleconference
+npm install
+npm run build
+```
+
+Or in one step:
+
+```bash
 npm run deploy:prepare
 ```
 
-This runs `npm install` in `client/` and `server/`, then builds the React app to `client/dist/`.
+**Cloud deploy:** use **Build command** `npm run build` and **Start command** `npm start`.  
+Root `postinstall` installs `client/` and `server/` dependencies automatically; `build` also installs client deps before Vite runs.
 
 ---
 
@@ -82,8 +90,8 @@ JWT_REFRESH_SECRET=CHANGE_TO_ANOTHER_LONG_RANDOM_STRING
 JWT_EXPIRES_IN=1h
 JWT_REFRESH_EXPIRES_IN=7d
 
-CLIENT_URL=https://your-domain.com
 UPLOAD_DIR=uploads
+CLIENT_URL=https://your-domain.com
 
 # Optional video (Daily.co)
 DAILY_API_KEY=
