@@ -26,7 +26,7 @@ const PatientReports = () => {
   useEffect(() => {
     setLoadingPatients(true);
     api.get('/patients', { params: { limit: 100 } })
-      .then(({ data }) => setPatients(data.data))
+      .then(({ data }) => setPatients(data.data ?? []))
       .catch(() => toast.error('Failed to load patients'))
       .finally(() => setLoadingPatients(false));
   }, []);
@@ -38,7 +38,7 @@ const PatientReports = () => {
     }
     setLoadingReports(true);
     api.get(`/patients/${selectedPatient}/reports`)
-      .then(({ data }) => setReports(data.data))
+      .then(({ data }) => setReports(data.data ?? []))
       .catch(() => toast.error('Failed to load patient reports'))
       .finally(() => setLoadingReports(false));
   }, [selectedPatient]);
@@ -55,7 +55,7 @@ const PatientReports = () => {
       setOpen(false);
       setContent('');
       const { data } = await api.get(`/patients/${selectedPatient}/reports`);
-      setReports(data.data);
+      setReports(data.data ?? []);
     } catch {
       toast.error('Failed to add patient report');
     } finally {

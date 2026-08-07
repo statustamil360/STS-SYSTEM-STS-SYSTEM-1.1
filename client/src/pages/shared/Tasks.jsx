@@ -20,6 +20,7 @@ import { getSelectSlotProps } from '../../utils/fieldPlaceholders';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { TASK_PRIORITY, TASK_STATUS, ROLE_LABELS, ROLES } from '../../utils/constants';
+import { buildTaskPayload } from '../../utils/crudHelpers';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
@@ -42,7 +43,16 @@ const Tasks = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [assignableUsers, setAssignableUsers] = useState([]);
-  const { register, handleSubmit, reset, control, formState: { errors } } = useForm();
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
+    defaultValues: {
+      title: '',
+      description: '',
+      assigned_to: '',
+      due_date: '',
+      priority: 'medium',
+      status: 'pending',
+    },
+  });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -77,7 +87,7 @@ const Tasks = () => {
     reset(row ? {
       title: row.title,
       description: row.description || '',
-      assigned_to: row.assigned_to,
+      assigned_to: row.assigned_to != null ? String(row.assigned_to) : '',
       due_date: row.due_date ? row.due_date.slice(0, 10) : '',
       priority: row.priority || 'medium',
       status: row.status || 'pending',
@@ -87,18 +97,29 @@ const Tasks = () => {
     setOpen(true);
   };
 
+  const handleCloseForm = () => {
+    setOpen(false);
+    setEditRow(null);
+  };
+
+  const onInvalid = (formErrors) => {
+    const firstError = Object.values(formErrors).find((e) => e?.message);
+    toast.error(firstError?.message || 'Please complete all required fields');
+  };
+
   const onSubmit = async (formData) => {
     setSubmitting(true);
     try {
-      const payload = { ...formData, assigned_to: Number(formData.assigned_to) };
+      const payload = buildTaskPayload(formData, { editRow, isClinical });
       if (editRow) {
         await api.put(`/tasks/${editRow.id}`, payload);
         toast.success('Task updated successfully');
       } else {
         await api.post('/tasks', payload);
         toast.success('Task created successfully');
+        setPage(0);
       }
-      setOpen(false);
+      handleCloseForm();
       fetchData();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
@@ -114,6 +135,7 @@ const Tasks = () => {
     try {
       await api.delete(`/tasks/${pendingDelete.id}`);
       toast.success('Task deleted successfully');
+      if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
       fetchData();
     } catch {
       toast.error('Failed to delete task');
@@ -178,7 +200,7 @@ const Tasks = () => {
 
       <Dialog
         open={open}
-        onClose={handleFormDialogClose(() => setOpen(false), submitting)}
+        onClose={handleFormDialogClose(handleCloseForm, submitting)}
         maxWidth="md"
         fullWidth
         scroll="paper"
@@ -194,7 +216,7 @@ const Tasks = () => {
         <Box
           key={editRow?.id ?? 'new'}
           component="form"
-          onSubmit={handleSubmit(onSubmit)}
+          onSubmit={handleSubmit(onSubmit, onInvalid)}
           sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         >
           <DialogContent dividers sx={dialogContentSx}>
@@ -288,7 +310,6 @@ const Tasks = () => {
                   select
                   icon={FlagOutlined}
                   control={control}
-                  defaultValue="medium"
                 >
                   {TASK_PRIORITY.map((p) => (
                     <MenuItem key={p} value={p}>{formatLabel(p)}</MenuItem>
@@ -303,7 +324,6 @@ const Tasks = () => {
                     select
                     icon={CheckCircleOutlined}
                     control={control}
-                    defaultValue={editRow.status}
                     showSelectPlaceholder={false}
                   >
                     {TASK_STATUS.map((s) => (
@@ -315,7 +335,7 @@ const Tasks = () => {
             </SectionCard>
           </DialogContent>
           <FormDialogActions
-            onCancel={() => setOpen(false)}
+            onCancel={handleCloseForm}
             submitLabel={editRow ? 'Update Task' : 'Create Task'}
             loading={submitting}
           />

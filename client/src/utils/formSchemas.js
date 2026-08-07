@@ -5,6 +5,29 @@ export const phoneSchema = yup.string()
   .transform((v) => (v === '' ? null : v))
   .matches(/^\+?[\d\s-]{8,15}$/, 'Enter a valid phone number (8–15 digits)');
 
+const passwordOnCreate = {
+  password: yup.string().when('$isEdit', {
+    is: true,
+    then: (schema) => schema.optional().strip(true),
+    otherwise: (schema) => schema.min(8, 'Password must be at least 8 characters').required('Password is required'),
+  }),
+  confirmPassword: yup.string().when('$isEdit', {
+    is: true,
+    then: (schema) => schema.optional().strip(true),
+    otherwise: (schema) => schema
+      .oneOf([yup.ref('password')], 'Passwords must match')
+      .required('Confirm password is required'),
+  }),
+};
+
+const statusOnUpsert = {
+  status: yup.string().when('$isEdit', {
+    is: true,
+    then: (schema) => schema.oneOf(['active', 'inactive', 'disabled']).required('Status is required'),
+    otherwise: (schema) => schema.oneOf(['active', 'inactive']).default('active'),
+  }),
+};
+
 export const staffCreateSchema = yup.object({
   name: yup.string().trim().required('Full name is required'),
   email: yup.string().email('Enter a valid email').required('Email is required'),
@@ -22,6 +45,11 @@ export const staffCreateSchema = yup.object({
     return v === '' ? '' : v;
   }),
   profession: yup.string().nullable().transform((v) => (v === '' ? null : v?.trim())),
+});
+
+export const staffUpsertSchema = staffCreateSchema.shape({
+  ...passwordOnCreate,
+  ...statusOnUpsert,
 });
 
 export const staffEditSchema = yup.object({
@@ -57,6 +85,27 @@ export const adminEditSchema = staffEditSchema.shape({
   }),
 });
 
+export const adminUpsertSchema = yup.object({
+  name: yup.string().trim().required('Full name is required'),
+  email: yup.string().email('Enter a valid email').required('Email is required'),
+  phone: phoneSchema.nullable(),
+  ...passwordOnCreate,
+  newPassword: yup.string().when('$isEdit', {
+    is: true,
+    then: (schema) => schema.transform((v) => v || undefined).optional()
+      .min(8, 'Password must be at least 8 characters'),
+    otherwise: (schema) => schema.optional().strip(true),
+  }),
+  confirmNewPassword: yup.string().when(['$isEdit', 'newPassword'], {
+    is: (isEdit, newPassword) => isEdit && Boolean(newPassword),
+    then: (schema) => schema
+      .oneOf([yup.ref('newPassword')], 'Passwords must match')
+      .required('Confirm the new password'),
+    otherwise: (schema) => schema.optional().strip(true),
+  }),
+  ...statusOnUpsert,
+});
+
 export const receptionistProfileFields = {
   date_of_birth: yup.string()
     .nullable()
@@ -89,6 +138,11 @@ export const receptionistEditSchema = staffEditSchema.shape({
   phone: yup.string().trim().required('Phone number is required')
     .matches(/^\+?[\d\s-]{8,15}$/, 'Enter a valid phone number (8–15 digits)'),
   ...receptionistProfileFields,
+});
+
+export const receptionistUpsertSchema = receptionistCreateSchema.shape({
+  ...passwordOnCreate,
+  ...statusOnUpsert,
 });
 
 export const staffPasswordResetSchema = yup.object({
