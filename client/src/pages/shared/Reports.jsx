@@ -16,6 +16,7 @@ import {
 } from '../../components/PremiumPageLayout';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
+import { refreshNotificationBadge } from '../../utils/notificationRefresh';
 
 const REPORT_TYPES = [
   { value: 'conference', label: 'Conference Report' },
@@ -73,10 +74,12 @@ const Reports = () => {
         window.URL.revokeObjectURL(url);
         toast.success('CSV exported successfully');
         fetchHistory();
+        refreshNotificationBadge();
       } else {
         setResult(data.data);
         toast.success('Report generated successfully');
         fetchHistory();
+        refreshNotificationBadge();
       }
     } catch {
       toast.error('Report generation failed');

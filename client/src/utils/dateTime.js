@@ -169,3 +169,17 @@ export const formatDateKey = (value, timezone = DEFAULT_TIMEZONE) => {
     return d.toISOString().slice(0, 10);
   }
 };
+
+/** Format seconds as human-readable duration (e.g. 1h 05m 30s). */
+export const formatDuration = (totalSeconds) => {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  if (seconds === 0) return '0s';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0 && h === 0) parts.push(`${s}s`);
+  return parts.join(' ') || '0s';
+};

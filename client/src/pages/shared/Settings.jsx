@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
   Typography, TextField, Button, Grid, MenuItem, Stack, Alert, Box,
-  CircularProgress, InputAdornment, ListSubheader,
+  CircularProgress, InputAdornment, ListSubheader, Switch, FormControlLabel, Divider,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
   TuneOutlined, EmailOutlined, SaveOutlined, LanguageOutlined,
-  ScheduleOutlined, PaletteOutlined, AccessTimeOutlined,
+  ScheduleOutlined, PaletteOutlined, AccessTimeOutlined, SmsOutlined, WhatsApp,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   PremiumPageCard, PremiumSection, adminFieldSx, premiumButtonSx,
 } from '../../components/PremiumPageLayout';
@@ -17,17 +17,93 @@ import { updateSystemSettings } from '../../redux/slices/settingsSlice';
 import { DEFAULT_TIMEZONE, TIMEZONE_OPTIONS, getTimezoneLabel } from '../../utils/timezones';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { formatClock } from '../../utils/dateTime';
+import { ROLES } from '../../utils/constants';
 import api from '../../services/api';
+
+const DEFAULT_EMAIL = {
+  enabled: false,
+  smtp_host: '',
+  smtp_port: 587,
+  smtp_user: '',
+  smtp_password: '',
+  from_email: '',
+  use_tls: true,
+};
+
+const DEFAULT_SMS = {
+  enabled: false,
+  provider: '',
+  api_key: '',
+  sender_id: '',
+  api_url: '',
+};
+
+const DEFAULT_WHATSAPP = {
+  enabled: false,
+  provider: '',
+  api_key: '',
+  phone_number_id: '',
+  business_account_id: '',
+  api_url: '',
+};
+
+const GatewaySection = ({
+  icon: Icon,
+  title,
+  subtitle,
+  enabled,
+  onEnabledChange,
+  onSave,
+  saving,
+  children,
+}) => (
+  <PremiumPageCard icon={Icon} title={title} subtitle={subtitle}>
+    <Stack spacing={2.5}>
+      <FormControlLabel
+        control={<Switch checked={enabled} onChange={(e) => onEnabledChange(e.target.checked)} color="success" />}
+        label={
+          <Box>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>Enable {title}</Typography>
+            <Typography variant="caption" color="text.secondary">Turn on outbound delivery through this gateway</Typography>
+          </Box>
+        }
+      />
+      <Divider />
+      {children}
+      <Stack direction="row" sx={{ justifyContent: 'flex-end' }}>
+        <Button
+          variant="contained"
+          onClick={onSave}
+          disabled={saving}
+          startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveOutlined />}
+          sx={{ ...premiumButtonSx, minWidth: 160 }}
+        >
+          {saving ? 'Saving...' : 'Save Gateway'}
+        </Button>
+      </Stack>
+    </Stack>
+  </PremiumPageCard>
+);
 
 const Settings = () => {
   const dispatch = useDispatch();
+  const role = useSelector((state) => state.auth.user?.role);
+  const isSuperAdmin = role === ROLES.SUPER_ADMIN;
+
   const [settings, setSettings] = useState({
     hospital_name: '',
     timezone: DEFAULT_TIMEZONE,
     language: 'en',
     theme: 'light',
   });
+  const [emailSettings, setEmailSettings] = useState(DEFAULT_EMAIL);
+  const [smsSettings, setSmsSettings] = useState(DEFAULT_SMS);
+  const [whatsappSettings, setWhatsappSettings] = useState(DEFAULT_WHATSAPP);
+
   const [loading, setLoading] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [smsSaving, setSmsSaving] = useState(false);
+  const [whatsappSaving, setWhatsappSaving] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [previewNow, setPreviewNow] = useState(() => new Date());
@@ -35,10 +111,18 @@ const Settings = () => {
   useEffect(() => {
     setFetching(true);
     api.get('/settings')
-      .then(({ data }) => setSettings((prev) => ({ ...prev, ...data.data })))
+      .then(({ data }) => {
+        const d = data.data || {};
+        setSettings((prev) => ({ ...prev, ...d }));
+        if (isSuperAdmin) {
+          setEmailSettings({ ...DEFAULT_EMAIL, ...(d.email_settings || {}) });
+          setSmsSettings({ ...DEFAULT_SMS, ...(d.sms_settings || {}) });
+          setWhatsappSettings({ ...DEFAULT_WHATSAPP, ...(d.whatsapp_settings || {}) });
+        }
+      })
       .catch(() => setFetchError('Failed to load settings'))
       .finally(() => setFetching(false));
-  }, []);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     const timer = setInterval(() => setPreviewNow(new Date()), 1000);
@@ -68,6 +152,18 @@ const Settings = () => {
     }
   };
 
+  const saveGateway = async (key, payload, setSaving, label) => {
+    setSaving(true);
+    try {
+      await api.put('/settings', { [key]: payload });
+      toast.success(`${label} settings saved`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || `Failed to save ${label} settings`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const fieldProps = (icon) => ({
     fullWidth: true,
     size: 'small',
@@ -91,6 +187,7 @@ const Settings = () => {
     <Stack spacing={2.5}>
       {fetchError && <Alert severity="error" sx={{ borderRadius: 2 }}>{fetchError}</Alert>}
 
+      {!isSuperAdmin && (
       <PremiumPageCard
         icon={TuneOutlined}
         title="System Settings"
@@ -238,24 +335,202 @@ const Settings = () => {
           </PremiumSection>
         )}
       </PremiumPageCard>
+      )}
 
-      <PremiumPageCard
-        icon={EmailOutlined}
-        title="Email Notifications"
-        subtitle="SMTP delivery for system alerts and reminders — planned integration"
-      >
-        <Alert severity="info" sx={{ borderRadius: 2 }}>
-          SMTP email delivery is not configured. Contact your administrator to enable outbound email.
-        </Alert>
-        <Grid container spacing={2} sx={{ mt: 0.5 }}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="SMTP Host" value="" disabled placeholder="Not configured" sx={adminFieldSx} size="small" fullWidth />
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <TextField label="From Email" value="" disabled placeholder="Not configured" sx={adminFieldSx} size="small" fullWidth />
-          </Grid>
-        </Grid>
-      </PremiumPageCard>
+      {isSuperAdmin && fetching && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+          <CircularProgress size={36} thickness={4} />
+        </Box>
+      )}
+
+      {isSuperAdmin && !fetching && (
+        <>
+          <GatewaySection
+            icon={EmailOutlined}
+            title="Email Notifications"
+            subtitle="SMTP delivery for system alerts, reminders, and guest credentials"
+            enabled={emailSettings.enabled}
+            onEnabledChange={(enabled) => setEmailSettings((p) => ({ ...p, enabled }))}
+            onSave={() => saveGateway('email_settings', emailSettings, setEmailSaving, 'Email')}
+            saving={emailSaving}
+          >
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="SMTP Host"
+                  value={emailSettings.smtp_host}
+                  onChange={(e) => setEmailSettings((p) => ({ ...p, smtp_host: e.target.value }))}
+                  placeholder="smtp.example.com"
+                  {...fieldProps(<EmailOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="SMTP Port"
+                  type="number"
+                  value={emailSettings.smtp_port}
+                  onChange={(e) => setEmailSettings((p) => ({ ...p, smtp_port: Number(e.target.value) || 587 }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="SMTP Username"
+                  value={emailSettings.smtp_user}
+                  onChange={(e) => setEmailSettings((p) => ({ ...p, smtp_user: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="SMTP Password"
+                  type="password"
+                  value={emailSettings.smtp_password}
+                  onChange={(e) => setEmailSettings((p) => ({ ...p, smtp_password: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="From Email"
+                  value={emailSettings.from_email}
+                  onChange={(e) => setEmailSettings((p) => ({ ...p, from_email: e.target.value }))}
+                  placeholder="noreply@amc.com"
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControlLabel
+                  sx={{ mt: 1 }}
+                  control={
+                    <Switch
+                      checked={emailSettings.use_tls}
+                      onChange={(e) => setEmailSettings((p) => ({ ...p, use_tls: e.target.checked }))}
+                    />
+                  }
+                  label="Use TLS / STARTTLS"
+                />
+              </Grid>
+            </Grid>
+          </GatewaySection>
+
+          <GatewaySection
+            icon={SmsOutlined}
+            title="SMS Gateway"
+            subtitle="Configure SMS provider for appointment and conference alerts"
+            enabled={smsSettings.enabled}
+            onEnabledChange={(enabled) => setSmsSettings((p) => ({ ...p, enabled }))}
+            onSave={() => saveGateway('sms_settings', smsSettings, setSmsSaving, 'SMS')}
+            saving={smsSaving}
+          >
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  select
+                  label="Provider"
+                  value={smsSettings.provider}
+                  onChange={(e) => setSmsSettings((p) => ({ ...p, provider: e.target.value }))}
+                  {...fieldProps(<SmsOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />)}
+                >
+                  <MenuItem value="">Select provider</MenuItem>
+                  <MenuItem value="twilio">Twilio</MenuItem>
+                  <MenuItem value="dialog">Dialog Axiata</MenuItem>
+                  <MenuItem value="mobitel">Mobitel</MenuItem>
+                  <MenuItem value="custom">Custom API</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Sender ID"
+                  value={smsSettings.sender_id}
+                  onChange={(e) => setSmsSettings((p) => ({ ...p, sender_id: e.target.value }))}
+                  placeholder="AMC-HEALTH"
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="API Key / Auth Token"
+                  type="password"
+                  value={smsSettings.api_key}
+                  onChange={(e) => setSmsSettings((p) => ({ ...p, api_key: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="API URL"
+                  value={smsSettings.api_url}
+                  onChange={(e) => setSmsSettings((p) => ({ ...p, api_url: e.target.value }))}
+                  placeholder="https://api.provider.com/sms/send"
+                  {...fieldProps(null)}
+                />
+              </Grid>
+            </Grid>
+          </GatewaySection>
+
+          <GatewaySection
+            icon={WhatsApp}
+            title="WhatsApp Gateway"
+            subtitle="Configure WhatsApp Business API for patient and staff messaging"
+            enabled={whatsappSettings.enabled}
+            onEnabledChange={(enabled) => setWhatsappSettings((p) => ({ ...p, enabled }))}
+            onSave={() => saveGateway('whatsapp_settings', whatsappSettings, setWhatsappSaving, 'WhatsApp')}
+            saving={whatsappSaving}
+          >
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  select
+                  label="Provider"
+                  value={whatsappSettings.provider}
+                  onChange={(e) => setWhatsappSettings((p) => ({ ...p, provider: e.target.value }))}
+                  {...fieldProps(<WhatsApp sx={{ fontSize: 20, color: 'success.main', opacity: 0.85 }} />)}
+                >
+                  <MenuItem value="">Select provider</MenuItem>
+                  <MenuItem value="meta">Meta Cloud API</MenuItem>
+                  <MenuItem value="twilio">Twilio WhatsApp</MenuItem>
+                  <MenuItem value="custom">Custom API</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Phone Number ID"
+                  value={whatsappSettings.phone_number_id}
+                  onChange={(e) => setWhatsappSettings((p) => ({ ...p, phone_number_id: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Business Account ID"
+                  value={whatsappSettings.business_account_id}
+                  onChange={(e) => setWhatsappSettings((p) => ({ ...p, business_account_id: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="API Key / Access Token"
+                  type="password"
+                  value={whatsappSettings.api_key}
+                  onChange={(e) => setWhatsappSettings((p) => ({ ...p, api_key: e.target.value }))}
+                  {...fieldProps(null)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="API URL"
+                  value={whatsappSettings.api_url}
+                  onChange={(e) => setWhatsappSettings((p) => ({ ...p, api_url: e.target.value }))}
+                  placeholder="https://graph.facebook.com/v19.0/..."
+                  {...fieldProps(null)}
+                />
+              </Grid>
+            </Grid>
+          </GatewaySection>
+        </>
+      )}
     </Stack>
   );
 };

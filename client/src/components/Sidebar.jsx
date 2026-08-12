@@ -6,7 +6,7 @@ import {
   Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
   Settings, Notifications, Security, SupportAgent, LocalHospital,
   MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
-  Description, Person, Tune, ExpandLess, ExpandMore, Shield,
+  Description, Person, Tune, ExpandLess, ExpandMore, Shield, AccessTime,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -20,11 +20,11 @@ const ICON_MAP = {
   Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
   Settings, Notifications, Security, SupportAgent, LocalHospital,
   MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
-  Description, Person, Tune,
+  Description, Person, Tune, AccessTime,
 };
 
 const BRAND_GRADIENT = 'linear-gradient(135deg, #0D9488 0%, #14B8A6 100%)';
-const ACTIVE_GRADIENT = 'linear-gradient(135deg, #1E3A5F 0%, #2E5984 100%)';
+const ACTIVE_GRADIENT = 'linear-gradient(135deg, #0F766E 0%, #0D9488 100%)';
 
 const SUPER_ADMIN = {
   bg: '#0B1120',
@@ -55,7 +55,7 @@ function NavIcon({ Icon, selected, dark }) {
             background: dark ? BRAND_GRADIENT : ACTIVE_GRADIENT,
             boxShadow: dark
               ? '0 4px 12px rgba(13, 148, 136, 0.35)'
-              : '0 4px 12px rgba(30, 58, 95, 0.22)',
+              : '0 4px 12px rgba(13, 148, 136, 0.28)',
             color: '#FFFFFF',
           }
           : {
@@ -81,6 +81,14 @@ const Sidebar = ({ mobileOpen, onClose }) => {
   const handleToggle = (title) => {
     setOpenMenus((prev) => ({ ...prev, [title]: !prev[title] }));
   };
+
+  // Sub-menu entries carry a query string (e.g. /conferences?tab=history), so
+  // they only count as active when the whole URL matches.
+  const isItemActive = (item) => (
+    item.path?.includes('?')
+      ? `${location.pathname}${location.search}` === item.path
+      : location.pathname === item.path
+  );
 
   const itemSx = (selected) => ({
     mx: 1.5,
@@ -113,7 +121,7 @@ const Sidebar = ({ mobileOpen, onClose }) => {
   });
 
   const renderNavItem = (item, isChild = false) => {
-    const selected = location.pathname === item.path;
+    const selected = isItemActive(item);
     const Icon = ICON_MAP[item.icon] || Dashboard;
 
     return (
@@ -217,13 +225,16 @@ const Sidebar = ({ mobileOpen, onClose }) => {
           }
 
           if (item.children) {
-            const isOpen = openMenus[item.title];
+            const hasActiveChild = item.children.some(isItemActive);
+            // Expand automatically while a child is active, unless the user
+            // has explicitly toggled this group.
+            const isOpen = openMenus[item.title] ?? hasActiveChild;
             const ParentIcon = ICON_MAP[item.icon] || Dashboard;
             return (
               <Box key={item.title}>
-                <ListItemButton onClick={() => handleToggle(item.title)} sx={itemSx(false)}>
+                <ListItemButton onClick={() => handleToggle(item.title)} sx={itemSx(hasActiveChild)}>
                   <ListItemIcon sx={{ minWidth: 42 }}>
-                    <NavIcon Icon={ParentIcon} selected={false} dark={isSuperAdmin} />
+                    <NavIcon Icon={ParentIcon} selected={hasActiveChild} dark={isSuperAdmin} />
                   </ListItemIcon>
                   <ListItemText primary={item.title} />
                   {isOpen
@@ -251,7 +262,7 @@ const Sidebar = ({ mobileOpen, onClose }) => {
           borderRadius: 2,
           background: isSuperAdmin
             ? BRAND_GRADIENT
-            : `linear-gradient(90deg, ${alpha('#1E3A5F', 0.15)}, ${alpha('#0D9488', 0.25)})`,
+            : `linear-gradient(90deg, ${alpha('#0F766E', 0.12)}, ${alpha('#0D9488', 0.22)})`,
           flexShrink: 0,
         }}
       />

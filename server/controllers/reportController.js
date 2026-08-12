@@ -60,7 +60,22 @@ exports.generate = async (req, res, next) => {
 
     await createAuditLog({ userId: req.user.id, action: 'export', entityType: 'report', ipAddress: req.ip });
 
-    if (req.query.format === 'csv') {
+    const recordCount = data.length;
+    const isCsv = req.query.format === 'csv';
+
+    await pool.execute(
+      'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+      [
+        req.user.id,
+        isCsv ? 'Report Exported' : 'Report Generated',
+        isCsv
+          ? `${title} CSV export completed (${recordCount} record${recordCount === 1 ? '' : 's'}).`
+          : `${title} generated successfully (${recordCount} record${recordCount === 1 ? '' : 's'}).`,
+        'export',
+      ],
+    );
+
+    if (isCsv) {
       if (!data.length) return res.send('');
       const keys = Object.keys(data[0]);
       const csv = [keys.join(','), ...data.map((r) => keys.map((k) => JSON.stringify(r[k] ?? '')).join(','))].join('\n');

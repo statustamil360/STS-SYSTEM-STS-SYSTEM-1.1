@@ -17,8 +17,8 @@ const getTheme = (mode = 'light') => {
   return createTheme({
     palette: {
       mode,
-      primary: { main: BRAND.navy, light: BRAND.navyLight, dark: BRAND.navyDark, contrastText: '#FFFFFF' },
-      secondary: { main: BRAND.teal, light: BRAND.tealLight, dark: BRAND.tealDark, contrastText: '#FFFFFF' },
+      primary: { main: BRAND.teal, light: BRAND.tealLight, dark: BRAND.tealDark, contrastText: '#FFFFFF' },
+      secondary: { main: BRAND.navy, light: BRAND.navyLight, dark: BRAND.navyDark, contrastText: '#FFFFFF' },
       background: {
         default: isLight ? '#F1F5F9' : '#0B1120',
         paper: isLight ? '#FFFFFF' : '#151E2E',
@@ -55,6 +55,19 @@ const getTheme = (mode = 'light') => {
         styleOverrides: {
           body: {
             scrollbarColor: isLight ? '#CBD5E1 transparent' : '#334155 transparent',
+          },
+          // Edge/IE render their own reveal and clear buttons inside password
+          // inputs, which duplicates the app's visibility toggle.
+          'input::-ms-reveal, input::-ms-clear': {
+            display: 'none',
+            width: 0,
+            height: 0,
+          },
+          'input::-webkit-credentials-auto-fill-button, input::-webkit-strong-password-auto-fill-button': {
+            visibility: 'hidden',
+            pointerEvents: 'none',
+            position: 'absolute',
+            right: 0,
           },
         },
       },
@@ -101,14 +114,14 @@ const getTheme = (mode = 'light') => {
           contained: {
             padding: '8px 20px',
             '&:hover': {
-              boxShadow: isLight ? '0 4px 12px rgba(30, 58, 95, 0.18)' : 'none',
+              boxShadow: isLight ? '0 4px 12px rgba(13, 148, 136, 0.22)' : 'none',
             },
           },
           outlined: {
             borderColor: isLight ? '#E2E8F0' : '#334155',
             '&:hover': {
-              borderColor: BRAND.navy,
-              bgcolor: isLight ? alpha(BRAND.navy, 0.04) : alpha(BRAND.navy, 0.12),
+              borderColor: BRAND.teal,
+              bgcolor: isLight ? alpha(BRAND.teal, 0.04) : alpha(BRAND.teal, 0.12),
             },
           },
         },
@@ -268,4 +281,5 @@ const getTheme = (mode = 'light') => {
   });
 };
 
+export { BRAND };
 export default getTheme;

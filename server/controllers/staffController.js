@@ -221,26 +221,55 @@ exports.update = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-exports.resetReceptionistPassword = async (req, res, next) => {
+const resetStaffUserPassword = async (req, res, next, { table, entityType, entityLabel, auditAction }) => {
   try {
     const { password } = req.body;
-    const [rows] = await pool.execute('SELECT user_id FROM receptionists WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ success: false, message: 'Receptionist not found' });
+    const [rows] = await pool.execute(`SELECT user_id FROM ${table} WHERE id = ?`, [req.params.id]);
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: `${entityLabel} not found` });
+    }
 
     const passwordHash = await hashPassword(password);
-    await pool.execute('UPDATE users SET password_hash = ?, refresh_token = NULL WHERE id = ?', [passwordHash, rows[0].user_id]);
+    await pool.execute(
+      'UPDATE users SET password_hash = ?, refresh_token = NULL WHERE id = ?',
+      [passwordHash, rows[0].user_id]
+    );
 
     await createAuditLog({
       userId: req.user.id,
-      action: 'receptionist_password_reset',
-      entityType: 'receptionist',
+      action: auditAction,
+      entityType,
       entityId: parseInt(req.params.id, 10),
       ipAddress: req.ip,
     });
 
-    res.json({ success: true, message: 'Receptionist password updated successfully' });
+    res.json({ success: true, message: `${entityLabel} password updated successfully` });
   } catch (err) { next(err); }
 };
+
+exports.resetReceptionistPassword = (req, res, next) =>
+  resetStaffUserPassword(req, res, next, {
+    table: 'receptionists',
+    entityType: 'receptionist',
+    entityLabel: 'Receptionist',
+    auditAction: 'receptionist_password_reset',
+  });
+
+exports.resetGPPassword = (req, res, next) =>
+  resetStaffUserPassword(req, res, next, {
+    table: 'gps',
+    entityType: 'gp',
+    entityLabel: 'GP',
+    auditAction: 'gp_password_reset',
+  });
+
+exports.resetAHPPassword = (req, res, next) =>
+  resetStaffUserPassword(req, res, next, {
+    table: 'allied_health_professionals',
+    entityType: 'ahp',
+    entityLabel: 'AHP',
+    auditAction: 'ahp_password_reset',
+  });
 
 exports.getAssignableUsers = async (req, res, next) => {
   try {

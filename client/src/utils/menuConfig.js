@@ -1,5 +1,13 @@
 import { ROLES } from './constants';
 
+// Sub-sections of the Conferences page, selected through the ?tab= query param.
+const CONFERENCE_SUBMENU = [
+  { title: 'Upcomings', path: '/conferences?tab=upcoming', icon: 'Event' },
+  { title: 'Historys', path: '/conferences?tab=history', icon: 'History' },
+  { title: 'Documents', path: '/conferences?tab=documents', icon: 'Description' },
+  { title: 'Reports', path: '/conferences?tab=reports', icon: 'Assessment' },
+];
+
 export const MENU_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
     { section: 'Overview' },
@@ -25,9 +33,11 @@ export const MENU_CONFIG = {
     { title: 'Allied Health Professionals', path: '/ahps', icon: 'HealthAndSafety' },
     { section: 'Patient Management' },
     { title: 'Patients', path: '/patients', icon: 'LocalHospital' },
+    { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
     { section: 'Analytics' },
     { title: 'Reports', path: '/reports', icon: 'Assessment' },
     { title: 'Audit Logs', path: '/audit-logs', icon: 'History' },
+    { title: 'Join Time Report', path: '/join-time-report', icon: 'AccessTime' },
     { section: 'System' },
     { title: 'Preferences', path: '/preferences', icon: 'Tune' },
     { title: 'Settings', path: '/settings', icon: 'Settings' },
@@ -39,8 +49,9 @@ export const MENU_CONFIG = {
     { title: 'Dashboard', path: '/dashboard', icon: 'Dashboard' },
     { section: 'Patient Workflow' },
     { title: 'Patients', path: '/patients', icon: 'LocalHospital' },
-    { title: 'Conferences', path: '/conferences', icon: 'VideoCall' },
+    { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Appointments', path: '/appointments', icon: 'Event' },
+    { title: 'Join Time Report', path: '/join-time-report', icon: 'AccessTime' },
     { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
     { section: 'Staff / Clinical' },
     { title: 'General Practitioners', path: '/gps', icon: 'MedicalServices' },
@@ -54,7 +65,7 @@ export const MENU_CONFIG = {
     { section: 'Overview' },
     { title: 'Dashboard', path: '/dashboard', icon: 'Dashboard' },
     { section: 'Clinical' },
-    { title: 'Conferences', path: '/conferences', icon: 'VideoCall' },
+    { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Medical Notes', path: '/medical-notes', icon: 'NoteAlt' },
     { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
@@ -66,7 +77,7 @@ export const MENU_CONFIG = {
     { section: 'Overview' },
     { title: 'Dashboard', path: '/dashboard', icon: 'Dashboard' },
     { section: 'Clinical' },
-    { title: 'Conferences', path: '/conferences', icon: 'VideoCall' },
+    { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Patient Reports', path: '/patient-reports', icon: 'Description' },
     { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },

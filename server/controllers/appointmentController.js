@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const { ensureAppointmentSequence, allocateAppointmentCode } = require('../utils/appointmentId');
 const path = require('path');
 const { uploadDir } = require('../config/jwt');
-const { syncConferenceFromAppointment, cancelConferenceForAppointment } = require('../services/conferenceSync');
+const { syncConferenceFromAppointment, cancelConferenceForAppointment, deleteConferenceForAppointment } = require('../services/conferenceSync');
 const { processTimedOutConferences } = require('../services/conferenceTimeoutService');
 
 const parseAhpAssignments = (raw) => {
@@ -122,6 +122,18 @@ exports.getAll = async (req, res, next) => {
     const params = [];
     if (date) { query += ' AND a.appointment_date = ?'; params.push(date); }
     if (status) { query += ' AND a.status = ?'; params.push(status); }
+    if (req.query.scope === 'records') {
+      query += ` AND (
+        a.status = 'cancelled'
+        OR (
+          a.status IN ('scheduled', 'confirmed')
+          AND (
+            a.appointment_date > CURDATE()
+            OR (a.appointment_date = CURDATE() AND a.appointment_time >= CURTIME())
+          )
+        )
+      )`;
+    }
     if (search) {
       query += ` AND (
         CONCAT(p.first_name, ' ', p.last_name) LIKE ?
@@ -349,7 +361,7 @@ exports.remove = async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    await cancelConferenceForAppointment(conn, req.params.id);
+    await deleteConferenceForAppointment(conn, req.params.id);
     await conn.execute('DELETE FROM appointments WHERE id = ?', [req.params.id]);
     await conn.commit();
     res.json({ success: true, message: 'Appointment deleted' });

@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { endAllSessions } = require('./conferenceAttendanceService');
 
 const TIMEOUT_MINUTES = 10;
 const TIMEOUT_REASON = 'time out';
@@ -30,6 +31,10 @@ exports.processTimedOutConferences = async (executor = pool) => {
      WHERE id IN (${ids.map(() => '?').join(',')})`,
     [TIMEOUT_REASON, ...ids]
   );
+
+  for (const confId of ids) {
+    await endAllSessions(confId, executor);
+  }
 
   if (appointmentIds.length) {
     await executor.execute(

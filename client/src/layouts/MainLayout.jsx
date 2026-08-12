@@ -4,6 +4,9 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
+import { PageRefreshProvider } from '../context/PageRefreshContext';
+import FloatingCalendarButton from '../components/FloatingCalendarButton';
+import TodayConferencesPopup from '../components/TodayConferencesPopup';
 
 const MainLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -18,31 +21,35 @@ const MainLayout = () => {
   }, [location, navigate]);
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-      <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
-      <Box
-        component="main"
-        sx={{
-          flex: 1,
-          minWidth: 0,
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <Header onMobileMenuOpen={() => setMobileOpen(true)} />
-        <Container
-          maxWidth="xl"
+    <PageRefreshProvider>
+      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+        <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+        <Box
+          component="main"
           sx={{
             flex: 1,
-            py: { xs: 2, md: 3 },
-            px: { xs: 2, md: 3 },
+            minWidth: 0,
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          <Outlet />
-        </Container>
+          <Header onMobileMenuOpen={() => setMobileOpen(true)} />
+          <Container
+            maxWidth="xl"
+            sx={{
+              flex: 1,
+              py: { xs: 2, md: 3 },
+              px: { xs: 2, md: 3 },
+            }}
+          >
+            <Outlet />
+          </Container>
+          <FloatingCalendarButton />
+          <TodayConferencesPopup />
+        </Box>
       </Box>
-    </Box>
+    </PageRefreshProvider>
   );
 };
 

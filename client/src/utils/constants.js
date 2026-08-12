@@ -4,6 +4,7 @@ export const ROLES = {
   RECEPTIONIST: 'receptionist',
   GP: 'gp',
   AHP: 'ahp',
+  CONFERENCE_GUEST: 'conference_guest',
 };
 
 export const ROLE_HOME_PATHS = {
@@ -12,6 +13,7 @@ export const ROLE_HOME_PATHS = {
   receptionist: '/dashboard',
   gp: '/dashboard',
   ahp: '/dashboard',
+  conference_guest: '/conferences',
 };
 
 export const getRoleHomePath = (role) => ROLE_HOME_PATHS[role] || '/dashboard';
@@ -65,7 +67,7 @@ export const STATUS_COLORS = {
   scheduled: 'info',
   waiting: 'warning',
   live: 'success',
-  completed: 'default',
+  completed: 'success',
   cancelled: 'error',
   confirmed: 'success',
   no_show: 'warning',

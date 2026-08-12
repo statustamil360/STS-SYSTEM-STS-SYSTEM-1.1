@@ -20,8 +20,9 @@ INSERT INTO user_profiles (user_id, first_name, last_name, phone) VALUES
 INSERT INTO settings (setting_key, setting_value) VALUES
   ('hospital_name', 'AMC Healthcare'),
   ('logo', ''),
-  ('email_settings', '{"smtp_host":"","smtp_port":587,"from_email":"noreply@amc.com"}'),
-  ('sms_settings', '{"provider":"","api_key":""}'),
+  ('email_settings', '{"enabled":false,"smtp_host":"","smtp_port":587,"smtp_user":"","smtp_password":"","from_email":"noreply@amc.com","use_tls":true}'),
+  ('sms_settings', '{"enabled":false,"provider":"","api_key":"","sender_id":"","api_url":""}'),
+  ('whatsapp_settings', '{"enabled":false,"provider":"","api_key":"","phone_number_id":"","business_account_id":"","api_url":""}'),
   ('timezone', 'Asia/Colombo'),
   ('language', 'en'),
   ('theme', 'light'),

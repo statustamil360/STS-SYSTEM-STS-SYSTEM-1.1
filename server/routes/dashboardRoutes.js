@@ -9,5 +9,6 @@ router.get('/stats', dashboardController.getStats);
 router.get('/appointments/today', dashboardController.getTodayAppointments);
 router.get('/conferences/recent', dashboardController.getRecentConferences);
 router.get('/activity', dashboardController.getActivityTimeline);
+router.get('/join-time-summary', dashboardController.getJoinTimeSummary);
 
 module.exports = router;

@@ -51,13 +51,21 @@ const DataTable = ({
   actionLabel,
   onAction,
   actionIcon: ActionIcon = Add,
+  headerActions = null,
   showRowNumbers = true,
+  searchValue,
+  highlightRowId = null,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(searchValue ?? '');
   const [sortField, setSortField] = useState(defaultSortField);
   const [sortOrder, setSortOrder] = useState(defaultSortOrder);
   const onSearchRef = useRef(onSearch);
+  const highlightRowRef = useRef(null);
   onSearchRef.current = onSearch;
+
+  useEffect(() => {
+    if (searchValue !== undefined) setSearchTerm(searchValue);
+  }, [searchValue]);
 
   const activeSortField = serverSort ? controlledSortField : sortField;
   const activeSortOrder = serverSort ? controlledSortOrder : sortOrder;
@@ -98,6 +106,16 @@ const DataTable = ({
 
   const displayRows = serverSort ? safeRows : sortedRows;
 
+  useEffect(() => {
+    if (!highlightRowId || loading) return undefined;
+    const hasRow = displayRows.some((row) => row.id === highlightRowId);
+    if (!hasRow) return undefined;
+    const timer = setTimeout(() => {
+      highlightRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [highlightRowId, displayRows, loading]);
+
   const colSpan = columns.length + (actions ? 1 : 0) + (showRowNumbers ? 1 : 0);
   const activeFilters = filters.filter((f) => f.value !== '' && f.value !== undefined && f.value !== null);
   const from = total ? page * rowsPerPage + 1 : 0;
@@ -116,7 +134,7 @@ const DataTable = ({
         boxShadow: '0 4px 24px rgba(15, 23, 42, 0.06)',
       }}
     >
-      {(title || onSearch || filters.length > 0 || actionLabel) && (
+      {(title || onSearch || filters.length > 0 || actionLabel || headerActions) && (
         <Box sx={{ px: { xs: 2, sm: 2.5 }, pt: 2.5, pb: 2 }}>
           <Stack
             direction="row"
@@ -155,25 +173,29 @@ const DataTable = ({
               )}
             </Stack>
 
-            {actionLabel && onAction && (
-              <Button
-                variant="contained"
-                size="small"
-                startIcon={<ActionIcon />}
-                onClick={onAction}
-                sx={{
-                  flexShrink: 0,
-                  px: 2,
-                  py: 0.875,
-                  borderRadius: 2,
-                  fontWeight: 600,
-                  fontSize: '0.8125rem',
-                  boxShadow: '0 6px 16px rgba(30, 58, 95, 0.2)',
-                  '&:hover': { boxShadow: '0 8px 20px rgba(30, 58, 95, 0.26)' },
-                }}
-              >
-                {actionLabel}
-              </Button>
+            {(headerActions || (actionLabel && onAction)) && (
+              <Stack direction="row" spacing={1} sx={{ flexShrink: 0, alignItems: 'center' }}>
+                {headerActions}
+                {actionLabel && onAction && (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<ActionIcon />}
+                    onClick={onAction}
+                    sx={{
+                      px: 2,
+                      py: 0.875,
+                      borderRadius: 2,
+                      fontWeight: 600,
+                      fontSize: '0.8125rem',
+                      boxShadow: '0 6px 16px rgba(30, 58, 95, 0.2)',
+                      '&:hover': { boxShadow: '0 8px 20px rgba(30, 58, 95, 0.26)' },
+                    }}
+                  >
+                    {actionLabel}
+                  </Button>
+                )}
+              </Stack>
             )}
           </Stack>
 
@@ -364,13 +386,20 @@ const DataTable = ({
                 </TableCell>
               </TableRow>
             ) : (
-              displayRows.map((row, index) => (
+              displayRows.map((row, index) => {
+                const isHighlighted = highlightRowId != null && row.id === highlightRowId;
+                return (
                 <TableRow
                   key={row.id}
+                  ref={isHighlighted ? highlightRowRef : undefined}
                   hover
                   sx={{
-                    bgcolor: index % 2 === 1 ? (theme) => alpha(theme.palette.primary.main, 0.015) : 'transparent',
-                    transition: 'background-color 120ms ease',
+                    bgcolor: isHighlighted
+                      ? (theme) => alpha(theme.palette.warning.main, 0.14)
+                      : index % 2 === 1 ? (theme) => alpha(theme.palette.primary.main, 0.015) : 'transparent',
+                    outline: isHighlighted ? (theme) => `2px solid ${alpha(theme.palette.warning.main, 0.55)}` : 'none',
+                    outlineOffset: -2,
+                    transition: 'background-color 120ms ease, outline 120ms ease',
                     '&:last-child td': { borderBottom: 0 },
                   }}
                 >
@@ -384,7 +413,7 @@ const DataTable = ({
                           fontSize: '0.8125rem',
                         }}
                       >
-                        {page * rowsPerPage + index + 1}
+                        {((page ?? 0) * (rowsPerPage ?? 10)) + index + 1}
                       </Typography>
                     </TableCell>
                   )}
@@ -472,7 +501,8 @@ const DataTable = ({
                     </TableCell>
                   )}
                 </TableRow>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>

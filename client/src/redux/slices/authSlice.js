@@ -6,6 +6,10 @@ export const login = createAsyncThunk('auth/login', async (credentials, { reject
     const { data } = await api.post('/auth/login', credentials);
     localStorage.setItem('accessToken', data.data.accessToken);
     localStorage.setItem('refreshToken', data.data.refreshToken);
+    if (data.data.user?.id) {
+      sessionStorage.removeItem(`today_conf_popup_hide_${data.data.user.id}`);
+      sessionStorage.removeItem(`today_conf_popup_remind10_${data.data.user.id}`);
+    }
     return data.data.user;
   } catch (err) {
     if (err.response?.status === 429) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Grid, Typography, Box, Chip, Button, Stack, Alert, Skeleton, Paper,
 } from '@mui/material';
@@ -7,17 +7,21 @@ import {
   PeopleOutlined, VideoCallOutlined, LocalHospitalOutlined, TaskAltOutlined, EventOutlined,
   MedicalServicesOutlined, HealthAndSafetyOutlined, AdminPanelSettingsOutlined, SpeedOutlined,
   SecurityOutlined, AssessmentOutlined, SettingsOutlined, ShieldOutlined, ChevronRightOutlined,
-  EventBusyOutlined, VideocamOffOutlined, HistoryOutlined, BoltOutlined, CalendarMonthOutlined,
+  EventBusyOutlined, VideocamOffOutlined, BoltOutlined,
   InsertChartOutlined, TrendingUpOutlined, AccessTimeOutlined,
 } from '@mui/icons-material';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StatCard from '../components/StatCard';
-import SimpleCalendar from '../components/SimpleCalendar';
+import ClinicalNextMeetingPanel from '../components/ClinicalNextMeetingPanel';
 import api from '../services/api';
 import { ROLE_LABELS, ROLES } from '../utils/constants';
 import useSystemDateTime from '../hooks/useSystemDateTime';
+import { formatDuration } from '../utils/dateTime';
+import { sortMeetingsByCountdown } from '../hooks/useCountdown';
+import SystemClock from '../components/SystemClock';
+import { usePageRefreshRegister } from '../context/PageRefreshContext';
 
 const STAT_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
@@ -98,7 +102,7 @@ const STATUS_COLORS = {
   cancelled: 'error',
 };
 
-const CHART_COLORS = ['#1E3A5F', '#0D9488', '#0284C7', '#7C3AED'];
+const CHART_COLORS = ['#0D9488', '#1E3A5F', '#0284C7', '#7C3AED'];
 
 const getStatGridSize = (count) => {
   if (count <= 3) return { xs: 12, sm: 6, md: 4 };
@@ -293,57 +297,16 @@ const QuickActionsList = ({ actions, onNavigate }) => (
   </Stack>
 );
 
-const ActivityItem = ({ action, userName, timestamp, isLast }) => (
-  <Stack direction="row" spacing={1.5} sx={{ position: 'relative', pb: isLast ? 0 : 2 }}>
-    {!isLast && (
-      <Box
-        sx={{
-          position: 'absolute',
-          left: 11,
-          top: 24,
-          bottom: 0,
-          width: 2,
-          bgcolor: 'divider',
-        }}
-      />
-    )}
-    <Box
-      sx={{
-        width: 24,
-        height: 24,
-        borderRadius: '50%',
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
-        border: '2px solid',
-        borderColor: 'background.paper',
-        zIndex: 1,
-      }}
-    >
-      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main' }} />
-    </Box>
-    <Box sx={{ flex: 1, minWidth: 0, pt: 0.25 }}>
-      <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8125rem', textTransform: 'capitalize', letterSpacing: '-0.01em' }}>
-        {action?.replace(/_/g, ' ')}
-      </Typography>
-      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-        {userName || 'System'} · {timestamp}
-      </Typography>
-    </Box>
-  </Stack>
-);
-
 const Dashboard = () => {
   const { user } = useSelector((state) => state.auth);
-  const { formatDate, formatDateTime, formatDateKey, timezone } = useSystemDateTime();
+  const { formatDate, formatDateTime, timezone } = useSystemDateTime();
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
   const [appointments, setAppointments] = useState([]);
   const [conferences, setConferences] = useState([]);
+  const [todayMeetings, setTodayMeetings] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [joinTimeSummary, setJoinTimeSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -354,41 +317,79 @@ const Dashboard = () => {
   const isGp = role === ROLES.GP;
   const isAhp = role === ROLES.AHP;
 
-  useEffect(() => {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError('');
-    Promise.all([
-      api.get('/dashboard/stats'),
-      api.get('/dashboard/appointments/today'),
-      api.get('/dashboard/conferences/recent'),
-      api.get('/dashboard/activity'),
-    ]).then(([statsRes, apptRes, confRes, actRes]) => {
+    try {
+      const isClinical = [ROLES.GP, ROLES.AHP].includes(role);
+      const canViewJoinTime = [ROLES.ADMIN, ROLES.RECEPTIONIST].includes(role);
+      const requests = [
+        api.get('/dashboard/stats'),
+        api.get('/dashboard/appointments/today'),
+        api.get('/dashboard/conferences/recent'),
+        api.get('/dashboard/activity'),
+        ...(isClinical ? [api.get('/conferences/schedule?range=today')] : []),
+        ...(canViewJoinTime ? [api.get('/dashboard/join-time-summary')] : []),
+      ];
+      const results = await Promise.all(requests);
+      const [statsRes, apptRes, confRes, actRes] = results;
+      let idx = 4;
+      const todayConfRes = isClinical ? results[idx++] : null;
+      const joinTimeRes = canViewJoinTime ? results[idx] : null;
       const appts = apptRes.data.data ?? [];
       const confs = confRes.data.data ?? [];
       setStats(statsRes.data.data ?? {});
       setAppointments(appts);
       setConferences(confs);
       setActivities(actRes.data.data ?? []);
-      setCalendarEvents([
-        ...appts.map((a) => ({
-          title: `Appt: ${a.patient_name}`,
-          date: formatDateKey(a.appointment_date),
-          color: '#1E3A5F',
-        })),
-        ...confs.map((c) => ({
-          title: `Conf: ${c.patient_name}`,
-          date: formatDateKey(c.scheduled_date),
-          color: '#0D9488',
-        })),
-      ]);
-    }).catch(() => {
+      setJoinTimeSummary(canViewJoinTime ? (joinTimeRes?.data?.data ?? null) : null);
+
+      if (isClinical && todayConfRes) {
+        const todayRows = (todayConfRes.data.data ?? [])
+          .filter((c) => !['completed', 'cancelled'].includes(c.status));
+        setTodayMeetings(sortMeetingsByCountdown(todayRows));
+      } else {
+        setTodayMeetings([]);
+      }
+      if (!canViewJoinTime) setJoinTimeSummary(null);
+    } catch {
       setError('Failed to load dashboard data. Please refresh the page.');
-    }).finally(() => setLoading(false));
-  }, [role, formatDateKey]);
+    } finally {
+      setLoading(false);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard, role]);
+
+  usePageRefreshRegister(loadDashboard);
+
+  useEffect(() => {
+    if (!isGp && !isAhp) return undefined;
+
+    const refreshTodayMeetings = () => {
+      api.get('/conferences/schedule?range=today')
+        .then(({ data }) => {
+          const todayRows = (data.data ?? [])
+            .filter((c) => !['completed', 'cancelled'].includes(c.status));
+          setTodayMeetings(sortMeetingsByCountdown(todayRows));
+        })
+        .catch(() => {});
+    };
+
+    const timer = window.setInterval(refreshTodayMeetings, 15000);
+    return () => window.clearInterval(timer);
+  }, [isGp, isAhp]);
 
   const statCards = STAT_CONFIG[role] || [];
   const statGridSize = getStatGridSize(statCards.length);
-  const displayName = user?.profile?.first_name || user?.first_name || 'User';
+  const displayName = user?.profile
+    ? `${user.profile.first_name || ''} ${user.profile.last_name || ''}`.trim()
+    : user?.first_name
+      ? `${user.first_name} ${user.last_name || ''}`.trim()
+      : user?.email || 'User';
+  const nextTodayMeeting = todayMeetings[0] || null;
   const todayLabel = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     weekday: 'long',
@@ -439,9 +440,9 @@ const Dashboard = () => {
           borderRadius: 3,
           color: 'common.white',
           background: isSuperAdmin
-            ? 'linear-gradient(135deg, #0B1E36 0%, #1E3A5F 55%, #0D9488 100%)'
-            : 'linear-gradient(135deg, #0F2744 0%, #1E3A5F 70%, #2E5984 100%)',
-          boxShadow: '0 12px 40px rgba(30, 58, 95, 0.25)',
+            ? 'linear-gradient(135deg, #0B1E36 0%, #0F766E 55%, #0D9488 100%)'
+            : 'linear-gradient(135deg, #0F766E 0%, #0D9488 70%, #14B8A6 100%)',
+          boxShadow: '0 12px 40px rgba(13, 148, 136, 0.25)',
         }}
       >
         <Box
@@ -485,7 +486,15 @@ const Dashboard = () => {
                 {todayLabel}
               </Typography>
             </Box>
-            <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
+            <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+              {(isGp || isAhp) && (
+                <ClinicalNextMeetingPanel
+                  meeting={nextTodayMeeting}
+                  userRole={role}
+                  onRefresh={loadDashboard}
+                />
+              )}
+              {(isAdmin || isSuperAdmin) && <SystemClock variant="hero" />}
               {isSuperAdmin && (
                 <Chip
                   label="System operational"
@@ -498,7 +507,7 @@ const Dashboard = () => {
                   }}
                 />
               )}
-              {!loading && statCards[0] && (
+              {!loading && statCards[0] && !isGp && !isAhp && (
                 <Chip
                   label={`${stats[statCards[0].key] ?? 0} ${statCards[0].title.toLowerCase()}`}
                   sx={{
@@ -587,6 +596,90 @@ const Dashboard = () => {
                   </Box>
                 )}
               </SectionCard>
+
+              {(isAdmin || isReceptionist) && (
+                <SectionCard
+                  title="Participant join time"
+                  subtitle={joinTimeSummary?.month_label
+                    ? `${joinTimeSummary.month_label} · salary basis`
+                    : 'Monthly totals for completed meetings'}
+                  icon={AccessTimeOutlined}
+                  accent="warning"
+                  action={(
+                    <Button size="small" onClick={() => navigate('/conferences?tab=history')}>
+                      History
+                    </Button>
+                  )}
+                >
+                  {!joinTimeSummary ? (
+                    <EmptyState icon={AccessTimeOutlined} message="No join time data for this month yet." />
+                  ) : (
+                    <Box>
+                      <Box
+                        sx={{
+                          mb: 2,
+                          p: 1.5,
+                          borderRadius: 2,
+                          bgcolor: (theme) => alpha(theme.palette.warning.main, 0.08),
+                          border: '1px solid',
+                          borderColor: (theme) => alpha(theme.palette.warning.main, 0.18),
+                        }}
+                      >
+                        <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                          Total recorded this month
+                        </Typography>
+                        <Typography variant="h5" fontWeight={800} color="warning.dark">
+                          {formatDuration(joinTimeSummary.month_total_seconds)}
+                        </Typography>
+                      </Box>
+
+                      {joinTimeSummary.by_role?.length > 0 && (
+                        <Stack spacing={0.75} sx={{ mb: 2 }}>
+                          {joinTimeSummary.by_role.map((r) => (
+                            <Stack
+                              key={r.role}
+                              direction="row"
+                              justifyContent="space-between"
+                              sx={{
+                                py: 0.75,
+                                px: 1,
+                                borderRadius: 1.5,
+                                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.03),
+                              }}
+                            >
+                              <Typography variant="body2" fontWeight={600}>
+                                {formatStatus(r.role)}
+                              </Typography>
+                              <Typography variant="body2" fontWeight={700} color="primary.main">
+                                {formatDuration(r.total_seconds)}
+                              </Typography>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      )}
+
+                      {joinTimeSummary.recent_conferences?.length > 0 && (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1 }}>
+                            Recent completed meetings
+                          </Typography>
+                          {joinTimeSummary.recent_conferences.slice(0, 5).map((c, index, arr) => (
+                            <ListRow
+                              key={c.id}
+                              primary={c.patient_name || c.conference_code}
+                              secondary={`${c.conference_code} · ${formatDuration(c.total_seconds)}`}
+                              status="completed"
+                              accent="warning"
+                              meta
+                              isLast={index === Math.min(arr.length, 5) - 1}
+                            />
+                          ))}
+                        </Box>
+                      )}
+                    </Box>
+                  )}
+                </SectionCard>
+              )}
             </Stack>
           </Grid>
         )}
@@ -604,17 +697,7 @@ const Dashboard = () => {
           </Grid>
         )}
 
-        <Grid size={{ xs: 12, lg: isSuperAdmin || isAdmin ? 8 : 5 }}>
-          <SectionCard
-            title="Calendar overview"
-            subtitle="Appointments and conferences this month"
-            icon={CalendarMonthOutlined}
-          >
-            <SimpleCalendar events={calendarEvents} />
-          </SectionCard>
-        </Grid>
-
-        <Grid size={{ xs: 12, lg: isSuperAdmin || isAdmin ? 4 : 3 }}>
+        <Grid size={{ xs: 12, lg: 8 }}>
           <Stack spacing={2.5}>
             {(isReceptionist || isGp || isAhp) && (
               <SectionCard
@@ -670,24 +753,6 @@ const Dashboard = () => {
               </ResponsiveContainer>
               ) : (
                 <EmptyState icon={InsertChartOutlined} message="No metrics available yet." />
-              )}
-            </SectionCard>
-
-            <SectionCard title="Activity timeline" subtitle="Latest system events" icon={HistoryOutlined}>
-              {activities.length === 0 ? (
-                <EmptyState icon={HistoryOutlined} message="No recent activity recorded." />
-              ) : (
-                <Box sx={{ pt: 0.5 }}>
-                  {activities.slice(0, 6).map((a, index, arr) => (
-                    <ActivityItem
-                      key={a.id}
-                      action={`${a.action} — ${a.entity_type || 'system'}`}
-                      userName={a.user_name}
-                      timestamp={formatDateTime(a.created_at)}
-                      isLast={index === Math.min(arr.length, 6) - 1}
-                    />
-                  ))}
-                </Box>
               )}
             </SectionCard>
           </Stack>

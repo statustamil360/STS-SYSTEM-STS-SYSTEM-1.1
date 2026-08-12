@@ -2,6 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const patientController = require('../controllers/patientController');
 const { authenticate, authorize } = require('../middleware/auth');
+const { canReceptionistEdit, canReceptionistDelete } = require('../middleware/receptionistPermission');
 const validate = require('../middleware/validate');
 
 const router = express.Router();
@@ -18,7 +19,7 @@ router.get('/:id/reports', authorize('ahp', 'receptionist', 'admin'), patientCon
 router.post('/:id/reports', authorize('ahp'), [body('report_content').notEmpty()], validate, patientController.addReport);
 
 router.get('/:id', authorize('admin', 'super_admin', 'receptionist', 'gp', 'ahp'), patientController.getById);
-router.put('/:id', authorize('receptionist', 'admin', 'super_admin'), patientController.update);
-router.delete('/:id', authorize('receptionist', 'admin', 'super_admin'), patientController.remove);
+router.put('/:id', authorize('receptionist', 'admin', 'super_admin'), canReceptionistEdit, patientController.update);
+router.delete('/:id', authorize('receptionist', 'admin', 'super_admin'), canReceptionistDelete, patientController.remove);
 
 module.exports = router;

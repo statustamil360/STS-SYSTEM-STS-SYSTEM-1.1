@@ -8,11 +8,12 @@ import {
   PersonAddOutlined, PersonOutlined, EmailOutlined, PhoneOutlined, LockOutlined,
   MedicalServicesOutlined, HealthAndSafetyOutlined, BadgeOutlined, LocalHospitalOutlined,
   EventOutlined, ToggleOnOutlined, CalendarTodayOutlined, LocationOnOutlined,
-  WcOutlined, ContactEmergencyOutlined,
+  WcOutlined, ContactEmergencyOutlined, AddOutlined, DeleteOutlined,
 } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import { toast } from 'react-toastify';
+import { useSelector } from 'react-redux';
 import DataTable from '../../components/DataTable';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import FormDialogActions from '../../components/FormDialogActions';
@@ -22,7 +23,9 @@ import {
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
-import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, WEEKDAY_SELECT_PLACEHOLDER } from '../../utils/constants';
+import useRolePermissions from '../../hooks/useRolePermissions';
+import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, WEEKDAY_SELECT_PLACEHOLDER, ROLES } from '../../utils/constants';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import {
   staffCreateSchema, staffEditSchema, staffPasswordResetSchema,
@@ -276,6 +279,143 @@ const StaffViewDialog = ({
   );
 };
 
+const AhpProfessionsDialog = ({ open, onClose, onUpdated }) => {
+  const [professions, setProfessions] = useState([]);
+  const [newProfession, setNewProfession] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const loadProfessions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/preferences/ahp-professions');
+      setProfessions(data.data ?? []);
+    } catch {
+      toast.error('Failed to load professions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) loadProfessions();
+  }, [open, loadProfessions]);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    const name = newProfession.trim();
+    if (!name) return;
+    setSubmitting(true);
+    try {
+      await api.post('/preferences/ahp-professions', { name });
+      toast.success('Profession added');
+      setNewProfession('');
+      await loadProfessions();
+      onUpdated?.();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to add profession');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/preferences/ahp-professions/${pendingDelete.id}`);
+      toast.success('Profession removed');
+      setPendingDelete(null);
+      await loadProfessions();
+      onUpdated?.();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to remove profession');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: dialogPaperSx } }}>
+        <PremiumDialogHeader
+          icon={HealthAndSafetyOutlined}
+          title="AHP Professions"
+          subtitle="Add or remove allied health profession types used when creating AHP accounts"
+        />
+        <DialogContent sx={dialogContentSx}>
+          <Box component="form" onSubmit={handleAdd}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 2.5 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="New profession"
+                placeholder="e.g. Physiotherapist"
+                value={newProfession}
+                onChange={(e) => setNewProfession(e.target.value)}
+                disabled={submitting}
+                sx={fieldSx}
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={submitting || !newProfession.trim()}
+                startIcon={<AddOutlined />}
+                sx={{ flexShrink: 0, px: 3, borderRadius: '999px', fontWeight: 700 }}
+              >
+                Add
+              </Button>
+            </Stack>
+          </Box>
+          {loading ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+              Loading professions…
+            </Typography>
+          ) : professions.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+              No professions yet. Add the first one above.
+            </Typography>
+          ) : (
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+              {professions.map((item) => (
+                <Chip
+                  key={item.id}
+                  label={item.name}
+                  onDelete={() => setPendingDelete(item)}
+                  deleteIcon={<DeleteOutlined sx={{ fontSize: 16 }} />}
+                  sx={{
+                    height: 34,
+                    fontWeight: 600,
+                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                    color: 'primary.main',
+                  }}
+                />
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+          <Button onClick={onClose} variant="contained" sx={{ borderRadius: 2, fontWeight: 600 }}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="Remove Profession"
+        message="AHP accounts using this profession will keep their current value, but it will no longer appear in the dropdown for new accounts."
+        subject={pendingDelete?.name}
+        confirmLabel="Remove"
+        loading={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </>
+  );
+};
+
 const createStaffPage = ({
   title,
   subtitle,
@@ -298,9 +438,15 @@ const createStaffPage = ({
   viewHeaderIcon,
   fieldOptionsEndpoint = null,
   requiredFields = ['name', 'email'],
+  addButtonLabel = null,
+  enableProfessionsManager = false,
 }) => {
   const StaffPage = () => {
     const { formatDate } = useSystemDateTime();
+    const { canEdit, canDelete } = useRolePermissions();
+    const { user } = useSelector((state) => state.auth);
+    const canResetPassword = enablePasswordReset
+      && [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
     const [total, setTotal] = useState(0);
@@ -318,6 +464,7 @@ const createStaffPage = ({
     const [viewOpen, setViewOpen] = useState(false);
     const [viewRow, setViewRow] = useState(null);
     const [selectOptions, setSelectOptions] = useState({});
+    const [professionsOpen, setProfessionsOpen] = useState(false);
 
     const upsertSchema = endpoint === '/staff/receptionists' ? receptionistUpsertSchema : staffUpsertSchema;
     const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
@@ -331,6 +478,23 @@ const createStaffPage = ({
     });
 
     const singular = title.replace(/s$/, '');
+    const addLabel = addButtonLabel || `Add ${singular}`;
+
+    const reloadFieldOptions = useCallback(() => {
+      if (!fieldOptionsEndpoint) return;
+      api.get(fieldOptionsEndpoint)
+        .then(({ data }) => {
+          const options = (data.data ?? []).map((item) => ({
+            value: item.name,
+            label: item.name,
+          }));
+          const fieldName = extraFields.find((f) => f.select)?.name;
+          if (fieldName) {
+            setSelectOptions((prev) => ({ ...prev, [fieldName]: options }));
+          }
+        })
+        .catch(() => {});
+    }, [fieldOptionsEndpoint, extraFields]);
 
     const isFieldRequired = (fieldName) => {
       if (requiredFields.includes(fieldName)) return true;
@@ -369,22 +533,11 @@ const createStaffPage = ({
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
+    usePageRefreshRegister(fetchData);
+
     useEffect(() => {
-      if (!fieldOptionsEndpoint) return undefined;
-      api.get(fieldOptionsEndpoint)
-        .then(({ data }) => {
-          const options = (data.data ?? []).map((item) => ({
-            value: item.name,
-            label: item.name,
-          }));
-          const fieldName = extraFields.find((f) => f.select)?.name;
-          if (fieldName) {
-            setSelectOptions((prev) => ({ ...prev, [fieldName]: options }));
-          }
-        })
-        .catch(() => {});
-      return undefined;
-    }, [fieldOptionsEndpoint]);
+      reloadFieldOptions();
+    }, [reloadFieldOptions]);
 
     const handleCloseForm = () => {
       setOpen(false);
@@ -507,7 +660,7 @@ const createStaffPage = ({
       setSubmitting(true);
       try {
         await api.patch(`${endpoint}/${resetTarget.id}/password`, { password: formData.password });
-        toast.success('Receptionist password updated successfully.');
+        toast.success(`${singular} password updated successfully.`);
         setResetOpen(false);
         setResetTarget(null);
       } catch (err) {
@@ -581,13 +734,30 @@ const createStaffPage = ({
           onSearch={(v) => { setSearch(v); setPage(0); }}
           searchPlaceholder={`Search ${title.toLowerCase()} by name, email, or ID...`}
           filters={staffFilters}
-          actionLabel={`Add ${singular}`}
+          headerActions={enableProfessionsManager ? (
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<HealthAndSafetyOutlined />}
+              onClick={() => setProfessionsOpen(true)}
+              sx={{
+                px: 2,
+                py: 0.875,
+                borderRadius: 2,
+                fontWeight: 600,
+                fontSize: '0.8125rem',
+              }}
+            >
+              AHP Professions
+            </Button>
+          ) : null}
+          actionLabel={addLabel}
           onAction={() => handleOpen()}
           actionIcon={PersonAddOutlined}
-          onEdit={handleOpen}
+          onEdit={canEdit ? handleOpen : undefined}
           onView={enableView ? handleView : undefined}
-          onDelete={handleDeleteRequest}
-          onResetPassword={enablePasswordReset ? openResetDialog : undefined}
+          onDelete={canDelete ? handleDeleteRequest : undefined}
+          onResetPassword={canResetPassword ? openResetDialog : undefined}
           actions
         />
 
@@ -826,9 +996,9 @@ const createStaffPage = ({
           </Box>
         </Dialog>
 
-        {enablePasswordReset && (
+        {canResetPassword && (
           <Dialog open={resetOpen} onClose={handleFormDialogClose(() => setResetOpen(false), submitting)} maxWidth="xs" fullWidth>
-            <DialogTitle sx={{ fontWeight: 700 }}>Reset Receptionist Password</DialogTitle>
+            <DialogTitle sx={{ fontWeight: 700 }}>Reset {singular} Password</DialogTitle>
             <form onSubmit={resetPasswordForm.handleSubmit(handleResetPassword)}>
               <DialogContent>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -890,6 +1060,14 @@ const createStaffPage = ({
             headerIcon={viewHeaderIcon}
           />
         )}
+
+        {enableProfessionsManager && (
+          <AhpProfessionsDialog
+            open={professionsOpen}
+            onClose={() => setProfessionsOpen(false)}
+            onUpdated={reloadFieldOptions}
+          />
+        )}
       </>
     );
   };
@@ -940,7 +1118,9 @@ export const GPs = createStaffPage({
   codeLabel: 'ID',
   hidePhoneColumn: true,
   enableView: true,
+  enablePasswordReset: true,
   viewHeaderIcon: MedicalServicesOutlined,
+  addButtonLabel: 'add GP',
   extraFields: [
     { name: 'specialization', label: 'Specialization' },
     { name: 'registration_number', label: 'Registration Number', hideInTable: true },
@@ -956,7 +1136,10 @@ export const AHPs = createStaffPage({
   codeField: 'ahp_code',
   codeLabel: 'ID',
   enableView: true,
+  enablePasswordReset: true,
   viewHeaderIcon: HealthAndSafetyOutlined,
+  addButtonLabel: 'add AHP',
+  enableProfessionsManager: true,
   fieldOptionsEndpoint: '/preferences/ahp-professions',
   extraFields: [
     { name: 'profession', label: 'Profession', select: true },
