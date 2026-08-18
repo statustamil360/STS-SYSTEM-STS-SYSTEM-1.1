@@ -13,8 +13,12 @@ const uiSlice = createSlice({
       state.darkMode = !state.darkMode;
       localStorage.setItem('theme', state.darkMode ? 'dark' : 'light');
     },
+    setDarkMode: (state, action) => {
+      state.darkMode = action.payload;
+      localStorage.setItem('theme', action.payload ? 'dark' : 'light');
+    },
   },
 });
 
-export const { toggleSidebar, setSidebarOpen, toggleDarkMode } = uiSlice.actions;
+export const { toggleSidebar, setSidebarOpen, toggleDarkMode, setDarkMode } = uiSlice.actions;
 export default uiSlice.reducer;

@@ -2,6 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const staffController = require('../controllers/staffController');
 const { authenticate, authorize } = require('../middleware/auth');
+const { canReceptionistEdit, canReceptionistDelete } = require('../middleware/receptionistPermission');
 const validate = require('../middleware/validate');
 
 const router = express.Router();
@@ -37,8 +38,11 @@ router.post('/gps', authorize('receptionist', 'admin'), [
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
   body('status').optional().isIn(['active', 'inactive']),
 ], validate, staffController.createGP);
-router.put('/gps/:id', authorize('receptionist', 'admin'), staffController.updateGP);
-router.delete('/gps/:id', authorize('receptionist', 'admin'), staffController.removeGP);
+router.put('/gps/:id', authorize('receptionist', 'admin'), canReceptionistEdit, staffController.updateGP);
+router.patch('/gps/:id/password', authorize('admin', 'super_admin'), [
+  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+], validate, staffController.resetGPPassword);
+router.delete('/gps/:id', authorize('receptionist', 'admin'), canReceptionistDelete, staffController.removeGP);
 
 router.get('/ahps', authorize('admin', 'super_admin', 'receptionist'), staffController.getAllAHPs);
 router.post('/ahps', authorize('receptionist', 'admin'), [
@@ -47,7 +51,10 @@ router.post('/ahps', authorize('receptionist', 'admin'), [
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
   body('status').optional().isIn(['active', 'inactive']),
 ], validate, staffController.createAHP);
-router.put('/ahps/:id', authorize('receptionist', 'admin'), staffController.updateAHP);
-router.delete('/ahps/:id', authorize('receptionist', 'admin'), staffController.removeAHP);
+router.put('/ahps/:id', authorize('receptionist', 'admin'), canReceptionistEdit, staffController.updateAHP);
+router.patch('/ahps/:id/password', authorize('admin', 'super_admin'), [
+  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+], validate, staffController.resetAHPPassword);
+router.delete('/ahps/:id', authorize('receptionist', 'admin'), canReceptionistDelete, staffController.removeAHP);
 
 module.exports = router;

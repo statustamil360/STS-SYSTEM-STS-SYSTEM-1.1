@@ -6,7 +6,7 @@ import {
 import {
   Menu as MenuIcon, Brightness4Outlined, Brightness7Outlined,
   NotificationsOutlined, PersonOutlined, LogoutOutlined, ChevronLeft,
-  ChevronRight, KeyboardArrowDownOutlined,
+  ChevronRight, KeyboardArrowDownOutlined, RefreshOutlined,
 } from '@mui/icons-material';
 import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -14,9 +14,11 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { toggleSidebar, toggleDarkMode } from '../redux/slices/uiSlice';
 import { logout } from '../redux/slices/authSlice';
 import api from '../services/api';
-import { ROLE_LABELS } from '../utils/constants';
+import { ROLE_LABELS, ROLES } from '../utils/constants';
 import { getPageMeta } from '../utils/pageMeta';
 import SystemClock from './SystemClock';
+import { usePageRefresh } from '../context/PageRefreshContext';
+import useDarkModeAccess from '../hooks/useDarkModeAccess';
 
 const TOOLBAR_HEIGHT = 72;
 
@@ -46,6 +48,8 @@ const Header = ({ onMobileMenuOpen }) => {
   const { darkMode, sidebarOpen } = useSelector((state) => state.ui);
   const [anchorEl, setAnchorEl] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const { refresh, refreshing } = usePageRefresh();
+  const canUseDarkMode = useDarkModeAccess();
 
   useEffect(() => {
     const fetchUnread = () => {
@@ -55,10 +59,15 @@ const Header = ({ onMobileMenuOpen }) => {
     };
     fetchUnread();
     const timer = setInterval(fetchUnread, 30000);
-    return () => clearInterval(timer);
+    window.addEventListener('notifications:refresh', fetchUnread);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('notifications:refresh', fetchUnread);
+    };
   }, [location.pathname]);
 
   const pageMeta = getPageMeta(location.pathname, user?.role);
+  const showSystemClock = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -168,15 +177,38 @@ const Header = ({ onMobileMenuOpen }) => {
             flexShrink: 0,
           }}
         >
-          <SystemClock />
-
-          <Tooltip title={darkMode ? 'Light mode' : 'Dark mode'}>
-            <IconButton onClick={() => dispatch(toggleDarkMode())} sx={iconBtnSx}>
-              {darkMode
-                ? <Brightness7Outlined sx={{ fontSize: 18 }} />
-                : <Brightness4Outlined sx={{ fontSize: 18 }} />}
-            </IconButton>
+          <Tooltip title="Refresh page data">
+            <span>
+              <IconButton
+                onClick={() => refresh()}
+                disabled={refreshing}
+                sx={iconBtnSx}
+              >
+                <RefreshOutlined
+                  sx={{
+                    fontSize: 18,
+                    animation: refreshing ? 'spin 0.8s linear infinite' : 'none',
+                    '@keyframes spin': {
+                      '0%': { transform: 'rotate(0deg)' },
+                      '100%': { transform: 'rotate(360deg)' },
+                    },
+                  }}
+                />
+              </IconButton>
+            </span>
           </Tooltip>
+
+          {showSystemClock && <SystemClock />}
+
+          {canUseDarkMode && (
+            <Tooltip title={darkMode ? 'Light mode' : 'Dark mode'}>
+              <IconButton onClick={() => dispatch(toggleDarkMode())} sx={iconBtnSx}>
+                {darkMode
+                  ? <Brightness7Outlined sx={{ fontSize: 18 }} />
+                  : <Brightness4Outlined sx={{ fontSize: 18 }} />}
+              </IconButton>
+            </Tooltip>
+          )}
 
           <Tooltip title="Notifications">
             <IconButton onClick={() => navigate('/notifications')} sx={iconBtnSx}>

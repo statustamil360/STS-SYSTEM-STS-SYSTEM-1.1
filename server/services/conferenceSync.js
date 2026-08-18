@@ -130,6 +130,14 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
   return result.insertId;
 };
 
+exports.deleteConferenceForAppointment = async (conn, appointmentId) => {
+  await conn.execute(
+    `DELETE FROM conferences
+     WHERE appointment_id = ? AND status != 'completed'`,
+    [appointmentId]
+  );
+};
+
 exports.cancelConferenceForAppointment = async (conn, appointmentId, reason = null) => {
   await conn.execute(
     `UPDATE conferences

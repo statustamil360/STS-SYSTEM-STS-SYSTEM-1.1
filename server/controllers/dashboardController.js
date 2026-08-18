@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { getMonthlyJoinSummary } = require('../services/conferenceAttendanceService');
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -133,5 +134,17 @@ exports.getActivityTimeline = async (req, res, next) => {
        ORDER BY al.created_at DESC LIMIT 10`
     );
     res.json({ success: true, data: rows });
+  } catch (err) { next(err); }
+};
+
+/** Participant join-time totals for salary (admin & receptionist only). */
+exports.getJoinTimeSummary = async (req, res, next) => {
+  try {
+    if (!['admin', 'receptionist'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Join time summary is restricted to admin and receptionist' });
+    }
+
+    const data = await getMonthlyJoinSummary();
+    res.json({ success: true, data });
   } catch (err) { next(err); }
 };

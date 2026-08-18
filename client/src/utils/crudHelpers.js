@@ -80,6 +80,13 @@ export const buildPatientPayload = (formData) => ({
 });
 
 export const buildTaskPayload = (formData, { editRow, isClinical }) => {
+  if (isClinical && editRow) {
+    return {
+      status: formData.status || editRow.status,
+      description: emptyToNull(formData.description),
+    };
+  }
+
   const payload = {
     title: formData.title?.trim(),
     description: emptyToNull(formData.description),

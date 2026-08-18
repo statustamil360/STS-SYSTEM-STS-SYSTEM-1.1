@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import {
-  Box, Card, Typography, Button, Chip, Stack, CircularProgress, Tooltip,
+  Box, Card, Typography, Button, Chip, Stack, CircularProgress, Tooltip, IconButton,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
-  AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined,
+  AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined, EditOutlined,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -12,6 +12,7 @@ import { useCountdown, getMeetingDateTime } from '../hooks/useCountdown';
 import { ROLES, STATUS_COLORS } from '../utils/constants';
 import { formatClockTime } from '../utils/dateTime';
 import api from '../services/api';
+import { ConferenceGuestButton } from './ConferenceGuestDialog';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
@@ -60,12 +61,13 @@ const ConferenceMeetingCard = ({
   const isGp = userRole === ROLES.GP;
   const isAhp = userRole === ROLES.AHP;
   const isClinical = isGp || isAhp;
+  const isAccepted = ['waiting', 'live'].includes(conference.status);
   const isLive = conference.status === 'live';
   const isCompleted = ['completed', 'cancelled'].includes(conference.status);
-  const canAccept = isGp && !isLive && !isCompleted;
-  const canJoinGp = isGp && (isLive || countdown.started) && !isCompleted;
-  const canJoinAhp = isAhp && isLive && !isCompleted;
-  const waitingForGp = isAhp && !isLive && !isCompleted;
+  const canAccept = isGp && conference.status === 'scheduled' && !isCompleted;
+  const canJoinGp = isGp && isAccepted && !isCompleted;
+  const canJoinAhp = isAhp && isAccepted && !isCompleted;
+  const waitingForGp = isAhp && conference.status === 'scheduled' && !isCompleted;
 
   const tier = useMemo(
     () => resolveTier({ diffMs: countdown.diffMs, isLive, isCompleted }),
@@ -79,9 +81,9 @@ const ConferenceMeetingCard = ({
     navigate(`/conferences/${conference.id}/room`, {
       state: {
         provider: data.provider,
-        roomUrl: data.roomUrl,
         roomId: data.roomId,
-        token: data.token,
+        iceServers: data.iceServers,
+        displayName: data.displayName,
       },
     });
   };
@@ -89,10 +91,9 @@ const ConferenceMeetingCard = ({
   const handleAccept = async () => {
     setAccepting(conference.id);
     try {
-      const { data } = await api.post(`/conferences/${conference.id}/accept`);
-      toast.success('Meeting accepted — joining now');
+      await api.post(`/conferences/${conference.id}/accept`);
+      toast.success('Meeting accepted — AHP participants can now join');
       onRefresh?.();
-      goToRoom(data.data);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept meeting');
     } finally {
@@ -112,6 +113,14 @@ const ConferenceMeetingCard = ({
     } finally {
       setJoining(null);
     }
+  };
+
+  const handleEditAppointment = () => {
+    if (!conference.appointment_id) {
+      toast.error('No linked appointment found for this conference');
+      return;
+    }
+    navigate('/appointments', { state: { highlightAppointmentId: conference.appointment_id } });
   };
 
   return (
@@ -180,7 +189,23 @@ const ConferenceMeetingCard = ({
             >
               {conference.conference_code}
             </Typography>
-            <Stack direction="row" spacing={0.4}>
+            <Stack direction="row" spacing={0.4} sx={{ alignItems: 'center' }}>
+              {userRole === ROLES.RECEPTIONIST && conference.appointment_id && (
+                <Tooltip title="Edit appointment">
+                  <IconButton
+                    size="small"
+                    onClick={handleEditAppointment}
+                    sx={{
+                      width: 22,
+                      height: 22,
+                      bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                      '&:hover': { bgcolor: (t) => alpha(t.palette.primary.main, 0.16) },
+                    }}
+                  >
+                    <EditOutlined sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
               {isNextUp && !isCompleted && (
                 <Chip label="Next" color="primary" size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }} />
               )}
@@ -284,10 +309,10 @@ const ConferenceMeetingCard = ({
                     onClick={handleAccept}
                     sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
                   >
-                    Accept & Join
+                    Accept
                   </Button>
                 )}
-                {(canJoinGp && !canAccept) && (
+                {canJoinGp && (
                   <Button
                     fullWidth
                     size="small"
@@ -300,7 +325,7 @@ const ConferenceMeetingCard = ({
                     Join
                   </Button>
                 )}
-                {canJoinAhp && (
+                {(canJoinAhp) && (
                   <Button
                     fullWidth
                     size="small"
@@ -325,20 +350,25 @@ const ConferenceMeetingCard = ({
                 )}
               </>
             ) : (
-              <Box
-                sx={{
-                  py: 0.55,
-                  px: 1,
-                  borderRadius: '8px',
-                  textAlign: 'center',
-                  border: '1px solid',
-                  borderColor: alpha(tone.base, 0.22),
-                  bgcolor: alpha(tone.base, 0.05),
-                }}
-              >
-                <Typography variant="caption" sx={{ fontWeight: 600, color: tone.accent, fontSize: '0.68rem' }}>
-                  {isLive ? 'In progress' : 'Awaiting GP acceptance'}
-                </Typography>
+              <Box>
+                <Box
+                  sx={{
+                    py: 0.55,
+                    px: 1,
+                    borderRadius: '8px',
+                    textAlign: 'center',
+                    border: '1px solid',
+                    borderColor: alpha(tone.base, 0.22),
+                    bgcolor: alpha(tone.base, 0.05),
+                  }}
+                >
+                  <Typography variant="caption" sx={{ fontWeight: 600, color: tone.accent, fontSize: '0.68rem' }}>
+                    {isAccepted ? 'In progress' : 'Awaiting GP acceptance'}
+                  </Typography>
+                </Box>
+                {userRole === ROLES.RECEPTIONIST && !isCompleted && (
+                  <ConferenceGuestButton conferenceId={conference.id} />
+                )}
               </Box>
             )}
           </Box>

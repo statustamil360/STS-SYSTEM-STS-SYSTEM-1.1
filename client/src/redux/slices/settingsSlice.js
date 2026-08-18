@@ -21,6 +21,21 @@ const settingsSlice = createSlice({
     hospital_name: '',
     language: 'en',
     theme: 'light',
+    receptionist_can_edit: true,
+    receptionist_can_delete: true,
+    receptionist_calendar_widget: true,
+    gp_conference_popup: true,
+    ahp_conference_popup: true,
+    gp_can_edit: true,
+    gp_can_delete: false,
+    ahp_can_edit: true,
+    ahp_can_delete: false,
+    dark_mode_allowed: true,
+    receptionist_dark_mode_allowed: true,
+    gp_dark_mode_allowed: true,
+    ahp_dark_mode_allowed: true,
+    gp_can_download_documents: false,
+    ahp_can_download_documents: false,
     loaded: false,
   },
   reducers: {
@@ -34,10 +49,7 @@ const settingsSlice = createSlice({
   extraReducers: (builder) => {
     builder
       .addCase(fetchSystemSettings.fulfilled, (state, action) => {
-        if (action.payload.timezone) state.timezone = action.payload.timezone;
-        if (action.payload.hospital_name !== undefined) state.hospital_name = action.payload.hospital_name;
-        if (action.payload.language) state.language = action.payload.language;
-        if (action.payload.theme) state.theme = action.payload.theme;
+        Object.assign(state, action.payload);
         state.loaded = true;
         localStorage.setItem('system_timezone', state.timezone);
       })

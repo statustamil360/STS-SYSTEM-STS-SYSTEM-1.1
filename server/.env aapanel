@@ -1,0 +1,30 @@
+# ============================================
+# AMC Teleconference — aaPanel Production
+# Copy this file to: server/.env  (exact name!)
+# Path on server: /www/wwwroot/AMCCONFERENCE/server/.env
+# ============================================
+
+PORT=5000
+NODE_ENV=production
+
+# MySQL (aaPanel → Database)
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=amcconference
+DB_PASSWORD="amc@2026"
+DB_NAME=amcconference
+
+# Auth — every line MUST have KEY=value (note the = on JWT_REFRESH_SECRET)
+JWT_SECRET=8f4c2a91e7b63d05c1a894f2e6d7b0c9a5f8e2d14b6c7039a1e8f4d2b7c6a905e3f1d8c4b792a6e0f5d3c8b1a947e62f0d9c5b3a8e714f6d2c0b9a5e8374
+JWT_REFRESH_SECRET=2d9e6f1a8c4b7035e1f9d2a6c8b0e4573a1f9c6d2e8b4a705f3c9e1d6b8a2f0c5e7391d4b6a8027c3f9e5d1a8b4c7062e9f0d3a7c5b1e846f2a9d0c6e738b5a1f4d2
+JWT_EXPIRES_IN=1h
+JWT_REFRESH_EXPIRES_IN=7d
+
+# No trailing slash — must match browser URL
+CLIENT_URL=https://teams.asterixmc.com
+
+UPLOAD_DIR=uploads
+
+# Optional: Daily.co video (leave empty for Jitsi fallback)
+DAILY_API_KEY=
+DAILY_DOMAIN=

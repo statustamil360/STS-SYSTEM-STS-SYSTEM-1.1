@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@daily-co/daily-js": "^0.91.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@fullcalendar/daygrid": "^6.1.21",
@@ -21,10 +20,17 @@
     "@mui/icons-material": "^9.2.0",
     "@mui/material": "^9.2.0",
     "@reduxjs/toolkit": "^2.12.0",
+    "@tiptap/extension-link": "^3.29.2",
+    "@tiptap/extension-text-align": "^3.29.2",
+    "@tiptap/extension-underline": "^3.29.2",
+    "@tiptap/pm": "^3.29.2",
+    "@tiptap/react": "^3.29.2",
+    "@tiptap/starter-kit": "^3.29.2",
     "@vitejs/plugin-react": "^6.0.3",
     "axios": "^1.19.0",
     "dayjs": "^1.11.21",
     "mammoth": "^1.12.0",
+    "mediasoup-client": "^3.21.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.83.0",
@@ -32,6 +38,7 @@
     "react-router-dom": "^7.18.2",
     "react-toastify": "^11.1.0",
     "recharts": "^3.10.1",
+    "socket.io-client": "^4.8.3",
     "vite": "^8.1.1",
     "yup": "^1.7.1"
   },

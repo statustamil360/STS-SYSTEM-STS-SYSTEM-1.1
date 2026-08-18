@@ -6,7 +6,7 @@ import { useSelector } from 'react-redux';
 import { formatClock } from '../utils/dateTime';
 import { DEFAULT_TIMEZONE, getTimezoneLabel } from '../utils/timezones';
 
-const SystemClock = () => {
+const SystemClock = ({ variant = 'default' }) => {
   const timezone = useSelector((state) => state.settings.timezone) || DEFAULT_TIMEZONE;
   const [now, setNow] = useState(() => new Date());
 
@@ -21,6 +21,8 @@ const SystemClock = () => {
     if (!match) return [time, ''];
     return [match[1], match[2]];
   })();
+
+  const isHero = variant === 'hero';
 
   return (
     <Tooltip
@@ -40,7 +42,7 @@ const SystemClock = () => {
     >
       <Box
         sx={{
-          display: { xs: 'none', md: 'flex' },
+          display: { xs: 'none', sm: 'flex' },
           alignItems: 'center',
           gap: 1.25,
           px: 1.5,
@@ -49,15 +51,21 @@ const SystemClock = () => {
           position: 'relative',
           minWidth: 0,
           border: '1px solid',
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.14),
-          background: (theme) => `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.07)} 0%, ${alpha(theme.palette.primary.dark, 0.03)} 55%, ${theme.palette.background.paper} 100%)`,
-          boxShadow: (theme) => `0 2px 14px ${alpha(theme.palette.primary.dark, 0.08)}, inset 0 1px 0 ${alpha('#FFFFFF', 0.65)}`,
+          borderColor: isHero
+            ? alpha('#FFFFFF', 0.22)
+            : (theme) => alpha(theme.palette.primary.main, 0.14),
+          background: isHero
+            ? alpha('#FFFFFF', 0.12)
+            : (theme) => `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.07)} 0%, ${alpha(theme.palette.primary.dark, 0.03)} 55%, ${theme.palette.background.paper} 100%)`,
+          boxShadow: isHero
+            ? 'none'
+            : (theme) => `0 2px 14px ${alpha(theme.palette.primary.dark, 0.08)}, inset 0 1px 0 ${alpha('#FFFFFF', 0.65)}`,
           transition: 'border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease',
-          '&:hover': {
+          '&:hover': isHero ? {} : {
             borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
             boxShadow: (theme) => `0 4px 18px ${alpha(theme.palette.primary.dark, 0.12)}, inset 0 1px 0 ${alpha('#FFFFFF', 0.75)}`,
           },
-          '&::before': {
+          '&::before': isHero ? undefined : {
             content: '""',
             position: 'absolute',
             inset: 0,
@@ -77,13 +85,13 @@ const SystemClock = () => {
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+            bgcolor: isHero ? alpha('#FFFFFF', 0.14) : (theme) => alpha(theme.palette.primary.main, 0.1),
             border: '1px solid',
-            borderColor: (theme) => alpha(theme.palette.primary.main, 0.16),
+            borderColor: isHero ? alpha('#FFFFFF', 0.2) : (theme) => alpha(theme.palette.primary.main, 0.16),
             boxShadow: (theme) => `inset 0 1px 0 ${alpha('#FFFFFF', 0.45)}`,
           }}
         >
-          <AccessTimeOutlined sx={{ fontSize: 17, color: 'primary.main' }} />
+          <AccessTimeOutlined sx={{ fontSize: 17, color: isHero ? 'common.white' : 'primary.main' }} />
           <Box
             sx={{
               position: 'absolute',
@@ -94,7 +102,7 @@ const SystemClock = () => {
               borderRadius: '50%',
               bgcolor: 'success.main',
               border: '1.5px solid',
-              borderColor: 'background.paper',
+              borderColor: isHero ? alpha('#FFFFFF', 0.35) : 'background.paper',
               boxShadow: '0 0 0 2px rgba(16, 185, 129, 0.18)',
               animation: 'clockPulse 2.4s ease-in-out infinite',
               '@keyframes clockPulse': {
@@ -114,7 +122,7 @@ const SystemClock = () => {
                 fontSize: '0.8125rem',
                 letterSpacing: '-0.02em',
                 fontVariantNumeric: 'tabular-nums',
-                color: 'primary.dark',
+                color: isHero ? 'common.white' : 'primary.dark',
                 lineHeight: 1.1,
               }}
             >
@@ -127,7 +135,7 @@ const SystemClock = () => {
                   fontWeight: 700,
                   fontSize: '0.6875rem',
                   letterSpacing: '0.06em',
-                  color: 'primary.main',
+                  color: isHero ? alpha('#FFFFFF', 0.9) : 'primary.main',
                   lineHeight: 1.1,
                   textTransform: 'uppercase',
                 }}
@@ -143,9 +151,9 @@ const SystemClock = () => {
                 px: 0.75,
                 py: 0.125,
                 borderRadius: 1,
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                bgcolor: isHero ? alpha('#FFFFFF', 0.14) : (theme) => alpha(theme.palette.primary.main, 0.08),
                 border: '1px solid',
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                borderColor: isHero ? alpha('#FFFFFF', 0.18) : (theme) => alpha(theme.palette.primary.main, 0.12),
               }}
             >
               <Typography
@@ -154,7 +162,7 @@ const SystemClock = () => {
                   fontWeight: 700,
                   fontSize: '0.625rem',
                   letterSpacing: '0.04em',
-                  color: 'primary.main',
+                  color: isHero ? 'common.white' : 'primary.main',
                   lineHeight: 1.2,
                 }}
               >
@@ -165,7 +173,7 @@ const SystemClock = () => {
               variant="caption"
               noWrap
               sx={{
-                color: 'text.secondary',
+                color: isHero ? alpha('#FFFFFF', 0.78) : 'text.secondary',
                 fontSize: '0.625rem',
                 fontWeight: 600,
                 letterSpacing: '0.03em',

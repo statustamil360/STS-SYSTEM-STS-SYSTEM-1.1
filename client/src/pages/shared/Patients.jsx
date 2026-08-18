@@ -22,6 +22,7 @@ import {
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
+import useRolePermissions from '../../hooks/useRolePermissions';
 import { ROLES } from '../../utils/constants';
 import {
   mapPatientToForm,
@@ -393,6 +394,7 @@ const PatientViewDialog = ({ open, patient, loading, onClose }) => {
 
 const Patients = () => {
   const { user } = useSelector((state) => state.auth);
+  const { canEdit, canDelete } = useRolePermissions();
   const canManage = [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const [rows, setRows] = useState([]);
@@ -637,8 +639,8 @@ const Patients = () => {
         actionLabel={canManage ? 'Add Patient' : undefined}
         onAction={canManage ? () => handleOpen() : undefined}
         onView={handleView}
-        onEdit={canManage ? handleOpen : undefined}
-        onDelete={canManage ? handleDelete : undefined}
+        onEdit={canManage && canEdit ? handleOpen : undefined}
+        onDelete={canManage && canDelete ? handleDelete : undefined}
         actions
       />
 

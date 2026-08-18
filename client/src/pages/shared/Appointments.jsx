@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Dialog, DialogContent, Grid, MenuItem, Box, Typography, Stack, IconButton,
-  Button, Chip, List, ListItem, ListItemText, ListItemSecondaryAction, DialogActions,
+  Button, Chip, List, ListItem, ListItemText, ListItemSecondaryAction, DialogActions, Alert,
 } from '@mui/material';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { alpha } from '@mui/material/styles';
 import {
   EventOutlined, PersonOutlined, CalendarTodayOutlined, AccessTimeOutlined,
@@ -22,12 +23,14 @@ import {
   handleFormDialogClose,
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
+import useRolePermissions from '../../hooks/useRolePermissions';
+import { usePageRefreshRegister } from '../../context/PageRefreshContext';
 import { formatDateInput, formatTimeInput } from '../../utils/crudHelpers';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { STATUS_COLORS } from '../../utils/constants';
 import { openAppointmentFilePreview } from '../../utils/filePreview';
 
-const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'];
+const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'cancelled'];
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
 
 const defaultFormValues = {
@@ -169,6 +172,10 @@ const validateAhpRows = (rows) => {
 };
 
 const Appointments = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const highlightHandledRef = useRef(false);
+  const { canEdit, canDelete } = useRolePermissions();
   const [rows, setRows] = useState([]);
   const [patients, setPatients] = useState([]);
   const [gps, setGps] = useState([]);
@@ -191,6 +198,8 @@ const Appointments = () => {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewData, setViewData] = useState(null);
+  const [highlightAppointmentId, setHighlightAppointmentId] = useState(null);
+  const [highlightLabel, setHighlightLabel] = useState('');
 
   const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
     defaultValues: defaultFormValues,
@@ -201,6 +210,7 @@ const Appointments = () => {
     try {
       const { data } = await api.get('/appointments', {
         params: {
+          scope: 'records',
           search: search || undefined,
           status: statusFilter || undefined,
           page: page + 1,
@@ -237,6 +247,35 @@ const Appointments = () => {
     fetchData();
     loadFormOptions();
   }, [fetchData, loadFormOptions]);
+
+  usePageRefreshRegister(fetchData);
+
+  useEffect(() => {
+    const targetId = location.state?.highlightAppointmentId;
+    if (!targetId || highlightHandledRef.current) return undefined;
+
+    highlightHandledRef.current = true;
+
+    const resolveHighlight = async () => {
+      try {
+        const { data } = await api.get(`/appointments/${targetId}`);
+        const appt = data.data;
+        const label = appt.appointment_code || `#${appt.id}`;
+        setHighlightAppointmentId(Number(appt.id));
+        setHighlightLabel(label);
+        setSearch(label);
+        setPage(0);
+        toast.info(`Showing appointment ${label} — use View, Edit, or Delete in the table below.`);
+      } catch {
+        toast.error('Could not find the linked appointment');
+      } finally {
+        navigate(location.pathname, { replace: true, state: {} });
+      }
+    };
+
+    resolveHighlight();
+    return undefined;
+  }, [location.state?.highlightAppointmentId, location.pathname, navigate]);
 
   const gpOptions = useMemo(() => gps.map((g) => ({
     value: String(g.id),
@@ -460,6 +499,16 @@ const Appointments = () => {
 
   return (
     <>
+      {highlightAppointmentId && (
+        <Alert
+          severity="info"
+          onClose={() => setHighlightAppointmentId(null)}
+          sx={{ mb: 2, borderRadius: 2 }}
+        >
+          {`Linked appointment ${highlightLabel} is highlighted below. Update status with Edit, open View for details, or Delete if needed.`}
+        </Alert>
+      )}
+
       <DataTable
         title="Appointment Records"
         columns={columns}
@@ -470,14 +519,20 @@ const Appointments = () => {
         rowsPerPage={rowsPerPage}
         onPageChange={setPage}
         onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
-        onSearch={(v) => { setSearch(v); setPage(0); }}
+        onSearch={(v) => {
+          setSearch(v);
+          setPage(0);
+          if (highlightAppointmentId) setHighlightAppointmentId(null);
+        }}
+        searchValue={search}
         searchPlaceholder="Search by patient, title, ID, or notes..."
         filters={appointmentFilters}
         actionLabel="Book Appointment"
         onAction={() => handleOpen()}
         onView={handleView}
-        onEdit={handleOpen}
-        onDelete={handleDelete}
+        onEdit={canEdit ? handleOpen : undefined}
+        onDelete={canDelete ? handleDelete : undefined}
+        highlightRowId={highlightAppointmentId}
         actions
       />
 

@@ -2,8 +2,8 @@ import { Box, Card, Typography, Chip } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 
 const ACCENT_PRESETS = {
-  'primary.main': { from: '#1E3A5F', to: '#2E5984', text: '#1E3A5F' },
-  'secondary.main': { from: '#0D9488', to: '#14B8A6', text: '#0F766E' },
+  'primary.main': { from: '#0D9488', to: '#14B8A6', text: '#0F766E' },
+  'secondary.main': { from: '#1E3A5F', to: '#2E5984', text: '#0F2744' },
   'info.main': { from: '#0284C7', to: '#38BDF8', text: '#0369A1' },
   'warning.main': { from: '#D97706', to: '#FBBF24', text: '#B45309' },
   'success.main': { from: '#059669', to: '#34D399', text: '#047857' },

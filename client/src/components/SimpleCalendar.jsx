@@ -1,12 +1,13 @@
 import { Box, Typography, Chip, Stack, alpha } from '@mui/material';
 import {
-  EventOutlined, VideoCallOutlined, ChevronLeftOutlined, ChevronRightOutlined,
+  VideoCallOutlined, ChevronLeftOutlined, ChevronRightOutlined,
 } from '@mui/icons-material';
 import dayjs from 'dayjs';
+import { formatClockTime } from '../utils/dateTime';
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const SimpleCalendar = ({ events = [] }) => {
+const SimpleCalendar = ({ events = [], todayConferences = [] }) => {
   const today = dayjs();
   const startOfMonth = today.startOf('month');
   const daysInMonth = today.daysInMonth();
@@ -23,10 +24,6 @@ const SimpleCalendar = ({ events = [] }) => {
   const cells = [];
   for (let i = 0; i < startDay; i += 1) cells.push(null);
   for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
-
-  const upcoming = [...events]
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-    .slice(0, 5);
 
   return (
     <Box>
@@ -162,10 +159,10 @@ const SimpleCalendar = ({ events = [] }) => {
         variant="subtitle2"
         sx={{ fontWeight: 700, mt: 2.5, mb: 1.5, letterSpacing: '-0.01em' }}
       >
-        Upcoming events
+        Today Conferences
       </Typography>
 
-      {upcoming.length === 0 ? (
+      {todayConferences.length === 0 ? (
         <Box
           sx={{
             py: 2.5,
@@ -178,66 +175,65 @@ const SimpleCalendar = ({ events = [] }) => {
           }}
         >
           <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-            No scheduled events this month
+            No conferences scheduled for today
           </Typography>
         </Box>
       ) : (
         <Stack spacing={1}>
-          {upcoming.map((event, index) => {
-            const isConference = event.title?.startsWith('Conf');
-            const Icon = isConference ? VideoCallOutlined : EventOutlined;
-            const accent = isConference ? 'secondary' : 'primary';
-            return (
-              <Stack
-                key={`${event.date}-${index}`}
-                direction="row"
-                spacing={1.5}
+          {todayConferences.map((conference) => (
+            <Stack
+              key={conference.id || `${conference.conference_code}-${conference.scheduled_time}`}
+              direction="row"
+              spacing={1.5}
+              sx={{
+                alignItems: 'center',
+                p: 1.25,
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                bgcolor: (theme) => alpha(theme.palette.secondary.main, 0.02),
+                transition: 'background-color 120ms ease, box-shadow 120ms ease',
+                '&:hover': {
+                  bgcolor: (theme) => alpha(theme.palette.secondary.main, 0.05),
+                  boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+                },
+              }}
+            >
+              <Box
                 sx={{
-                  alignItems: 'center',
-                  p: 1.25,
+                  width: 36,
+                  height: 36,
                   borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  bgcolor: (theme) => alpha(theme.palette[accent].main, 0.02),
-                  transition: 'background-color 120ms ease, box-shadow 120ms ease',
-                  '&:hover': {
-                    bgcolor: (theme) => alpha(theme.palette[accent].main, 0.05),
-                    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
-                  },
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  color: 'secondary.main',
+                  bgcolor: (theme) => alpha(theme.palette.secondary.main, 0.1),
                 }}
               >
-                <Box
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                    color: `${accent}.main`,
-                    bgcolor: (theme) => alpha(theme.palette[accent].main, 0.1),
-                  }}
-                >
-                  <Icon sx={{ fontSize: 18 }} />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" noWrap sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
-                    {event.title?.replace(/^(Conf|Appt):\s*/, '')}
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-                    {dayjs(event.date).format('ddd, D MMM YYYY')}
-                  </Typography>
-                </Box>
+                <VideoCallOutlined sx={{ fontSize: 18 }} />
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="body2" noWrap sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
+                  {conference.patient_name || conference.title}
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+                  {formatClockTime(conference.scheduled_time)}
+                  {conference.conference_code ? ` · ${conference.conference_code}` : ''}
+                </Typography>
+              </Box>
+              {conference.status && (
                 <Chip
-                  label={isConference ? 'Conference' : 'Appointment'}
+                  label={conference.status}
                   size="small"
                   variant="outlined"
-                  sx={{ height: 22, fontSize: '0.6875rem', fontWeight: 600 }}
+                  color="secondary"
+                  sx={{ height: 22, fontSize: '0.6875rem', fontWeight: 600, textTransform: 'capitalize' }}
                 />
-              </Stack>
-            );
-          })}
+              )}
+            </Stack>
+          ))}
         </Stack>
       )}
     </Box>

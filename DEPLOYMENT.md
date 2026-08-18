@@ -15,7 +15,7 @@ Browser  →  https://your-domain.com
               MySQL (amc_teleconference)
 ```
 
-Optional: **Daily.co** for video (`DAILY_API_KEY` in `.env`). Without it, **Jitsi** is used automatically.
+Optional: **private WebRTC** (mediasoup + coturn on your VPS). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md). Jitsi and Daily.co are no longer used.
 
 ---
 
@@ -93,9 +93,14 @@ JWT_REFRESH_EXPIRES_IN=7d
 UPLOAD_DIR=uploads
 CLIENT_URL=https://your-domain.com
 
-# Optional video (Daily.co)
-DAILY_API_KEY=
-DAILY_DOMAIN=
+# Private WebRTC (mediasoup + coturn on VPS)
+WEBRTC_LISTEN_IP=0.0.0.0
+WEBRTC_ANNOUNCED_IP=YOUR_PUBLIC_VPS_IP
+STUN_URLS=stun:turn.yourdomain.com:3478
+TURN_URL=turn:turn.yourdomain.com:3478
+TURN_SECRET=YOUR_COTURN_SECRET
+MEDIASOUP_MIN_PORT=40000
+MEDIASOUP_MAX_PORT=49999
 ```
 
 | Variable | Notes |
@@ -263,7 +268,7 @@ npm run migrate:timeout
 | Database connection failed | Check MySQL running, `.env` credentials, firewall |
 | 502 Bad Gateway | Node not running on PORT; check `pm2 logs` |
 | Uploads missing | Ensure `server/uploads` exists and is writable |
-| Video not working | Add `DAILY_API_KEY` or allow Jitsi in browser (camera/mic permissions) |
+| Video not working | See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md): open UDP 40000–49999, configure coturn, set `WEBRTC_ANNOUNCED_IP`, allow camera/mic |
 
 ---
 

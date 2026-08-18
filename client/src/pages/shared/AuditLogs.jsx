@@ -14,6 +14,7 @@ import {
 } from '../../components/PremiumPageLayout';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
+import { refreshNotificationBadge } from '../../utils/notificationRefresh';
 
 const ACTION_OPTIONS = [
   { value: '', label: 'All Actions' },
@@ -84,6 +85,7 @@ const AuditLogs = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
       toast.success('Audit log export downloaded');
+      refreshNotificationBadge();
     } catch {
       toast.error('Failed to export audit logs');
     } finally {

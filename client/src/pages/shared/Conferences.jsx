@@ -1,27 +1,50 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, MenuItem,
   Box, Typography, Stack, ToggleButton, ToggleButtonGroup, Button,
-  IconButton, Tooltip, Paper,
+  IconButton, Tooltip, Paper, Tabs, Tab, CircularProgress, Divider, Chip, Pagination,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { useForm, Controller } from 'react-hook-form';
 import { toast } from 'react-toastify';
 import { useSelector } from 'react-redux';
+import { useSearchParams } from 'react-router-dom';
 import {
   VideoCallOutlined, HistoryOutlined, OpenInNewOutlined, LinkOutlined, ContentCopyOutlined,
+  EventAvailableOutlined, FolderOpenOutlined, AssessmentOutlined, DownloadOutlined,
+  PictureAsPdfOutlined, GridOnOutlined, DescriptionOutlined, ArticleOutlined,
+  VisibilityOutlined, CloseOutlined, AccessTimeOutlined,
 } from '@mui/icons-material';
 import DataTable from '../../components/DataTable';
 import ConferenceMeetingCard from '../../components/ConferenceMeetingCard';
+import ConferenceAttendanceDialog from '../../components/ConferenceAttendanceDialog';
 import FormDialogActions from '../../components/FormDialogActions';
 import api from '../../services/api';
 import { selectMenuSlotProps } from '../../utils/fieldPlaceholders';
 import { handleFormDialogClose } from '../../components/PremiumFormFields';
 import { ROLES, CONFERENCE_STATUS } from '../../utils/constants';
 import { sortMeetingsByCountdown } from '../../hooks/useCountdown';
+import useDocumentDownloadAccess from '../../hooks/useDocumentDownloadAccess';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
+import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import mammoth from 'mammoth';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
+
+const resolveDocPreviewMode = (mimeType, fileName, fileType) => {
+  const mime = (mimeType || '').toLowerCase();
+  const ext = (fileName || '').split('.').pop()?.toLowerCase();
+  const type = (fileType || '').toLowerCase();
+  if (mime.includes('pdf') || ext === 'pdf' || type === 'pdf') return 'pdf';
+  if (
+    mime.includes('wordprocessingml')
+    || mime.includes('msword')
+    || ext === 'docx'
+    || ext === 'doc'
+    || type === 'docx'
+  ) return 'docx';
+  return 'unsupported';
+};
 
 const meetingsSignature = (list) => (list || [])
   .map((m) => `${m.id}:${m.status}:${m.scheduled_date}:${m.scheduled_time}`)
@@ -34,13 +57,39 @@ const SCHEDULE_RANGES = [
   { value: 'month', label: 'This Month', possessive: 'This Month\'s', empty: 'this month' },
 ];
 
+const CONFERENCE_TABS = [
+  { value: 'upcoming', label: 'Upcoming', icon: EventAvailableOutlined },
+  { value: 'history', label: 'History', icon: HistoryOutlined },
+  { value: 'documents', label: 'Documents', icon: FolderOpenOutlined },
+  { value: 'reports', label: 'Reports', icon: AssessmentOutlined },
+];
+
+const EXPORT_FORMATS = [
+  { value: 'csv', label: 'CSV', hint: 'Comma separated values', icon: DescriptionOutlined, color: 'info' },
+  { value: 'excel', label: 'Excel', hint: 'Microsoft Excel (.xlsx)', icon: GridOnOutlined, color: 'success' },
+  { value: 'pdf', label: 'PDF', hint: 'Portable document (.pdf)', icon: PictureAsPdfOutlined, color: 'error' },
+  { value: 'word', label: 'Word', hint: 'Microsoft Word (.docx)', icon: ArticleOutlined, color: 'primary' },
+];
+
+const CARDS_PER_PAGE = 15;
+
+const formatFileSize = (bytes) => {
+  if (!bytes && bytes !== 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 const Conferences = () => {
   const { user } = useSelector((state) => state.auth);
+  const canDownloadDocuments = useDocumentDownloadAccess();
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
+  const canViewAttendance = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(user?.role);
   const canUpdateStatus = isClinical;
   const [rows, setRows] = useState([]);
   const [todayMeetings, setTodayMeetings] = useState([]);
   const [scheduleRange, setScheduleRange] = useState('today');
+  const [schedulePage, setSchedulePage] = useState(1);
   const [loadingToday, setLoadingToday] = useState(true);
   const [accepting, setAccepting] = useState(null);
   const [joining, setJoining] = useState(null);
@@ -53,10 +102,38 @@ const Conferences = () => {
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-  const [linkPopup, setLinkPopup] = useState({ open: false, url: '', code: '' });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const activeTab = CONFERENCE_TABS.some((t) => t.value === requestedTab) ? requestedTab : 'upcoming';
+  const setActiveTab = (value) => setSearchParams({ tab: value }, { replace: true });
+
+  const [linkPopup, setLinkPopup] = useState({ open: false, url: '', code: '', status: '' });
   const [sortTick, setSortTick] = useState(() => Date.now());
   const { register, handleSubmit, reset, control } = useForm();
+
+  const [documents, setDocuments] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [documentsTotal, setDocumentsTotal] = useState(0);
+  const [documentsPage, setDocumentsPage] = useState(0);
+  const [documentsPerPage, setDocumentsPerPage] = useState(10);
+  const [documentsSearch, setDocumentsSearch] = useState('');
+
+  const [docPreview, setDocPreview] = useState({
+    open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null,
+  });
+  const [reportFilters, setReportFilters] = useState({ start_date: '', end_date: '', status: '' });
+  const [exporting, setExporting] = useState(null);
+  const [attendanceOpen, setAttendanceOpen] = useState(false);
+  const [attendanceConferenceId, setAttendanceConferenceId] = useState(null);
+
+  const openAttendance = (row) => {
+    setAttendanceConferenceId(row.id);
+    setAttendanceOpen(true);
+  };
+
+  useEffect(() => () => {
+    if (docPreview.url) window.URL.revokeObjectURL(docPreview.url);
+  }, [docPreview.url]);
 
   const sortedTodayMeetings = useMemo(
     () => sortMeetingsByCountdown(todayMeetings, sortTick),
@@ -68,8 +145,24 @@ const Conferences = () => {
     [scheduleRange]
   );
 
+  const scheduleTotalPages = Math.max(1, Math.ceil(sortedTodayMeetings.length / CARDS_PER_PAGE));
+
+  // Keep the current page valid when the meeting list shrinks (status changes,
+  // range switch, or a live refresh removing cards).
+  useEffect(() => {
+    setSchedulePage((prev) => Math.min(prev, scheduleTotalPages));
+  }, [scheduleTotalPages]);
+
+  const pagedMeetings = useMemo(() => {
+    const start = (schedulePage - 1) * CARDS_PER_PAGE;
+    return sortedTodayMeetings.slice(start, start + CARDS_PER_PAGE);
+  }, [sortedTodayMeetings, schedulePage]);
+
   const handleRangeChange = (_event, value) => {
-    if (value) setScheduleRange(value);
+    if (value) {
+      setScheduleRange(value);
+      setSchedulePage(1);
+    }
   };
 
   const fetchToday = useCallback(async ({ silent = false } = {}) => {
@@ -84,7 +177,9 @@ const Conferences = () => {
           headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
         }),
       });
-      const next = data.data ?? [];
+      const next = (data.data ?? []).filter(
+        (m) => !['completed', 'cancelled'].includes(m.status)
+      );
       setTodayMeetings((prev) => (
         silent && meetingsSignature(prev) === meetingsSignature(next) ? prev : next
       ));
@@ -100,6 +195,7 @@ const Conferences = () => {
     try {
       const { data } = await api.get('/conferences', {
         params: {
+          scope: 'history',
           search: search || undefined,
           status: statusFilter || undefined,
           page: page + 1,
@@ -112,28 +208,67 @@ const Conferences = () => {
     finally { setLoading(false); }
   }, [search, statusFilter, page, rowsPerPage]);
 
+  const fetchDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    try {
+      const { data } = await api.get('/conferences/documents', {
+        params: {
+          search: documentsSearch || undefined,
+          page: documentsPage + 1,
+          limit: documentsPerPage,
+        },
+      });
+      setDocuments(data.data ?? []);
+      setDocumentsTotal(data.pagination?.total ?? 0);
+    } catch { toast.error('Failed to load conference documents'); }
+    finally { setDocumentsLoading(false); }
+  }, [documentsSearch, documentsPage, documentsPerPage]);
+
   const refreshAll = useCallback(() => {
     fetchToday({ silent: true });
-    if (showHistory) fetchData();
-  }, [fetchToday, fetchData, showHistory]);
+    if (activeTab === 'history') fetchData();
+  }, [fetchToday, fetchData, activeTab]);
+
+  const refreshPage = useCallback(async () => {
+    if (activeTab === 'upcoming') {
+      await fetchToday();
+    } else if (activeTab === 'history') {
+      await fetchData();
+    } else if (activeTab === 'documents') {
+      await fetchDocuments();
+    }
+  }, [activeTab, fetchToday, fetchData, fetchDocuments]);
+
+  usePageRefreshRegister(refreshPage);
+
+  // Keep the tab in the URL so sidebar sub-menu links stay highlighted.
+  useEffect(() => {
+    if (requestedTab !== activeTab) setSearchParams({ tab: activeTab }, { replace: true });
+  }, [requestedTab, activeTab, setSearchParams]);
 
   useEffect(() => {
-    if (showHistory) fetchData();
-  }, [fetchData, showHistory]);
+    if (activeTab === 'history') fetchData();
+  }, [fetchData, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'documents') fetchDocuments();
+  }, [fetchDocuments, activeTab]);
 
   useEffect(() => {
     fetchToday();
   }, [fetchToday]);
 
   useEffect(() => {
+    if (activeTab !== 'upcoming') return undefined;
     const poll = setInterval(() => fetchToday({ silent: true }), 30000);
     return () => clearInterval(poll);
-  }, [fetchToday]);
+  }, [fetchToday, activeTab]);
 
   useEffect(() => {
+    if (activeTab !== 'upcoming') return undefined;
     const timer = setInterval(() => setSortTick(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [activeTab]);
 
   const handleOpen = (row) => {
     setEditRow(row);
@@ -159,34 +294,284 @@ const Conferences = () => {
     finally { setSubmitting(false); }
   };
 
+  const normalizeMeetingUrl = (url) => {
+    if (!url) return '';
+    const trimmed = String(url).trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
+
   const handleOpenLink = (row) => {
     if (!row.meeting_link) return;
-    setLinkPopup({ open: true, url: row.meeting_link, code: row.conference_code || '' });
+    setLinkPopup({
+      open: true,
+      url: normalizeMeetingUrl(row.meeting_link),
+      code: row.conference_code || '',
+      status: row.status || '',
+    });
+  };
+
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
   };
 
   const handleCopyLink = async () => {
     if (!linkPopup.url) return;
     try {
-      await navigator.clipboard.writeText(linkPopup.url);
+      await copyText(linkPopup.url);
       toast.success('Meeting link copied');
     } catch {
       toast.error('Unable to copy link');
     }
   };
 
-  const columns = [
+  const handleOpenLinkExternal = () => {
+    if (!linkPopup.url) return;
+    window.open(linkPopup.url, '_blank', 'noopener,noreferrer');
+  };
+
+  const closeDocPreview = useCallback(() => {
+    setDocPreview((prev) => {
+      if (prev.url) window.URL.revokeObjectURL(prev.url);
+      return { open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null };
+    });
+  }, []);
+
+  const openDocument = async (row, { download = false } = {}) => {
+    if (download && !canDownloadDocuments) {
+      toast.error('Document download is not allowed for your role');
+      return;
+    }
+
+    if (download) {
+      try {
+        const { data } = await api.get(
+          `/conferences/${row.conference_id}/documents/${row.file_id}/view`,
+          { params: { download: 1 }, responseType: 'blob' }
+        );
+        const url = window.URL.createObjectURL(data);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = row.original_name || 'document';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      } catch {
+        toast.error('Failed to download document');
+      }
+      return;
+    }
+
+    setDocPreview((prev) => {
+      if (prev.url) window.URL.revokeObjectURL(prev.url);
+      return {
+        open: true,
+        loading: true,
+        url: '',
+        fileName: row.original_name || 'Document',
+        mode: null,
+        html: '',
+        row,
+      };
+    });
+
+    try {
+      const { data, headers } = await api.get(
+        `/conferences/${row.conference_id}/documents/${row.file_id}/view`,
+        { responseType: 'blob' }
+      );
+      const mime = data.type || headers['content-type'] || '';
+      const fileName = row.original_name || 'Document';
+      const mode = resolveDocPreviewMode(mime, fileName, row.mime_type);
+
+      if (mode === 'docx') {
+        const arrayBuffer = await data.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        setDocPreview({
+          open: true,
+          loading: false,
+          url: '',
+          fileName,
+          mode: 'docx',
+          html: result.value,
+          row,
+        });
+        return;
+      }
+
+      if (mode === 'pdf') {
+        const url = window.URL.createObjectURL(data);
+        setDocPreview({
+          open: true,
+          loading: false,
+          url,
+          fileName,
+          mode: 'pdf',
+          html: '',
+          row,
+        });
+        return;
+      }
+
+      setDocPreview({
+        open: true,
+        loading: false,
+        url: '',
+        fileName,
+        mode: 'unsupported',
+        html: '',
+        row,
+      });
+    } catch {
+      toast.error('Failed to open document');
+      closeDocPreview();
+    }
+  };
+
+  const handleExport = async (format) => {
+    setExporting(format);
+    try {
+      const { data } = await api.get('/conferences/export', {
+        params: {
+          format,
+          status: reportFilters.status || undefined,
+          start_date: reportFilters.start_date || undefined,
+          end_date: reportFilters.end_date || undefined,
+        },
+        responseType: 'blob',
+      });
+
+      const extension = { csv: 'csv', excel: 'xlsx', pdf: 'pdf', word: 'docx' }[format];
+      const url = window.URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `conference-report-${new Date().toISOString().slice(0, 10)}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${format.toUpperCase()} report downloaded`);
+    } catch {
+      toast.error('Failed to generate report');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const documentColumns = useMemo(() => [
     { field: 'conference_code', headerName: 'Conference ID' },
     { field: 'patient_name', headerName: 'Patient' },
-    { field: 'gp_name', headerName: 'GP', render: (r) => r.gp_name || '—' },
     {
-      field: 'ahp_name',
-      headerName: 'AHP',
-      render: (r) => r.ahp_participants || r.ahp_name || '—',
+      field: 'original_name',
+      headerName: 'Document',
+      render: (r) => (
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <PictureAsPdfOutlined
+            sx={{
+              fontSize: 18,
+              color: /\.pdf$/i.test(r.original_name || '') ? 'error.main' : 'text.disabled',
+            }}
+          />
+          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+            {r.original_name}
+          </Typography>
+        </Stack>
+      ),
     },
-    { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
-    { field: 'scheduled_time', headerName: 'Time', render: (r) => formatClockTime(r.scheduled_time) },
+    { field: 'file_size', headerName: 'Size', render: (r) => formatFileSize(r.file_size) },
+    { field: 'scheduled_date', headerName: 'Meeting Date', render: (r) => formatCalendarDate(r.scheduled_date) },
     { field: 'status', headerName: 'Status', type: 'status' },
     {
+      field: 'actions',
+      headerName: 'File',
+      sortable: false,
+      render: (r) => (
+        <Stack direction="row" spacing={0.5}>
+          <Tooltip title="View document">
+            <IconButton
+              size="small"
+              onClick={() => openDocument(r)}
+              sx={{
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.15) },
+              }}
+            >
+              <VisibilityOutlined sx={{ fontSize: 17 }} color="primary" />
+            </IconButton>
+          </Tooltip>
+          {canDownloadDocuments && (
+            <Tooltip title="Download">
+              <IconButton
+                size="small"
+                onClick={() => openDocument(r, { download: true })}
+                sx={{
+                  bgcolor: (theme) => alpha(theme.palette.success.main, 0.08),
+                  '&:hover': { bgcolor: (theme) => alpha(theme.palette.success.main, 0.15) },
+                }}
+              >
+                <DownloadOutlined sx={{ fontSize: 17 }} color="success" />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Stack>
+      ),
+    },
+  ], [canDownloadDocuments]);
+
+  const columns = useMemo(() => {
+    const base = [
+      { field: 'conference_code', headerName: 'Conference ID' },
+      { field: 'patient_name', headerName: 'Patient' },
+      { field: 'gp_name', headerName: 'GP', render: (r) => r.gp_name || '—' },
+      {
+        field: 'ahp_name',
+        headerName: 'AHP',
+        render: (r) => r.ahp_participants || r.ahp_name || '—',
+      },
+      { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
+      { field: 'scheduled_time', headerName: 'Time', render: (r) => formatClockTime(r.scheduled_time) },
+      { field: 'status', headerName: 'Status', type: 'status' },
+    ];
+
+    if (canViewAttendance) {
+      base.push({
+        field: 'join_time',
+        headerName: 'Join Time',
+        sortable: false,
+        render: (r) => (
+          r.status === 'completed' ? (
+            <Tooltip title="View participant join times (salary basis)">
+              <IconButton
+                size="small"
+                onClick={() => openAttendance(r)}
+                sx={{
+                  bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
+                  '&:hover': { bgcolor: (theme) => alpha(theme.palette.warning.main, 0.18) },
+                }}
+              >
+                <AccessTimeOutlined sx={{ fontSize: 17 }} color="warning" />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <Typography variant="body2" color="text.secondary">—</Typography>
+          )
+        ),
+      });
+    }
+
+    base.push({
       field: 'meeting_link',
       headerName: 'Link',
       sortable: false,
@@ -208,8 +593,10 @@ const Conferences = () => {
           <Typography variant="body2" color="text.secondary">—</Typography>
         )
       ),
-    },
-  ];
+    });
+
+    return base;
+  }, [canViewAttendance]);
 
   const conferenceFilters = [
     {
@@ -219,14 +606,58 @@ const Conferences = () => {
       onChange: (v) => { setStatusFilter(v); setPage(0); },
       options: [
         { value: '', label: 'All Statuses' },
-        ...CONFERENCE_STATUS.map((s) => ({ value: s, label: formatLabel(s) })),
+        { value: 'completed', label: 'Completed' },
+        { value: 'cancelled', label: 'Cancelled' },
       ],
     },
   ];
 
   return (
     <>
-      <Box mb={3}>
+      <Paper
+        elevation={0}
+        sx={{
+          mb: 3,
+          borderRadius: 3,
+          border: '1px solid',
+          borderColor: 'divider',
+          overflow: 'hidden',
+        }}
+      >
+        <Tabs
+          value={activeTab}
+          onChange={(_e, value) => setActiveTab(value)}
+          variant="scrollable"
+          scrollButtons="auto"
+          aria-label="Conference sections"
+          sx={{
+            px: 1,
+            minHeight: 54,
+            '& .MuiTab-root': {
+              minHeight: 54,
+              textTransform: 'none',
+              fontWeight: 600,
+              fontSize: '0.875rem',
+              gap: 0.75,
+              color: 'text.secondary',
+              '&.Mui-selected': { color: 'primary.main', fontWeight: 700 },
+            },
+            '& .MuiTabs-indicator': { height: 3, borderRadius: '3px 3px 0 0' },
+          }}
+        >
+          {CONFERENCE_TABS.map((tab) => (
+            <Tab
+              key={tab.value}
+              value={tab.value}
+              label={tab.label}
+              icon={<tab.icon sx={{ fontSize: 19 }} />}
+              iconPosition="start"
+            />
+          ))}
+        </Tabs>
+      </Paper>
+
+      <Box sx={{ display: activeTab === 'upcoming' ? 'block' : 'none' }} mb={3}>
         <Stack
           direction={{ xs: 'column', md: 'row' }}
           spacing={2}
@@ -308,7 +739,7 @@ const Conferences = () => {
               gap: { xs: 1.5, xl: 1.25 },
             }}
           >
-            {sortedTodayMeetings.map((meeting, index) => (
+            {pagedMeetings.map((meeting, index) => (
               <ConferenceMeetingCard
                 key={meeting.id}
                 conference={meeting}
@@ -318,24 +749,50 @@ const Conferences = () => {
                 joining={joining}
                 setAccepting={setAccepting}
                 setJoining={setJoining}
-                isNextUp={index === 0}
+                isNextUp={schedulePage === 1 && index === 0}
               />
             ))}
           </Box>
         )}
+
+        {!loadingToday && sortedTodayMeetings.length > 0 && (
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1.5}
+            sx={{
+              mt: 2.5,
+              px: { xs: 1.5, sm: 2 },
+              py: 1,
+              borderRadius: 2.5,
+              border: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+              {`Showing ${(schedulePage - 1) * CARDS_PER_PAGE + 1}–`
+                + `${Math.min(schedulePage * CARDS_PER_PAGE, sortedTodayMeetings.length)}`
+                + ` of ${sortedTodayMeetings.length} meetings`}
+            </Typography>
+            {scheduleTotalPages > 1 && (
+              <Pagination
+                color="primary"
+                shape="rounded"
+                size="small"
+                count={scheduleTotalPages}
+                page={schedulePage}
+                onChange={(_event, value) => setSchedulePage(value)}
+                aria-label="Conference schedule pages"
+                sx={{ '& .MuiPaginationItem-root': { fontWeight: 600 } }}
+              />
+            )}
+          </Stack>
+        )}
       </Box>
 
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: showHistory ? 2 : 0 }}>
-        <Button
-          variant={showHistory ? 'contained' : 'outlined'}
-          startIcon={<HistoryOutlined />}
-          onClick={() => setShowHistory((prev) => !prev)}
-        >
-          Conference History
-        </Button>
-      </Box>
-
-      {showHistory && (
+      {activeTab === 'history' && (
         <DataTable
           title={isClinical ? 'All My Conferences' : 'Conference History'}
           columns={columns}
@@ -354,16 +811,241 @@ const Conferences = () => {
         />
       )}
 
+      {activeTab === 'documents' && (
+        <DataTable
+          title="Conference Documents"
+          columns={documentColumns}
+          rows={documents}
+          loading={documentsLoading}
+          total={documentsTotal}
+          page={documentsPage}
+          rowsPerPage={documentsPerPage}
+          onPageChange={setDocumentsPage}
+          onRowsPerPageChange={(v) => { setDocumentsPerPage(v); setDocumentsPage(0); }}
+          onSearch={(v) => { setDocumentsSearch(v); setDocumentsPage(0); }}
+          searchPlaceholder="Search by conference ID, patient, or file name..."
+          actions={false}
+        />
+      )}
+
+      {activeTab === 'reports' && (
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            overflow: 'hidden',
+            boxShadow: '0 4px 24px rgba(15, 23, 42, 0.06)',
+          }}
+        >
+          <Box sx={{ px: { xs: 2, sm: 3 }, pt: 2.5, pb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+              <Box
+                sx={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                  color: 'primary.main',
+                }}
+              >
+                <AssessmentOutlined sx={{ fontSize: 20 }} />
+              </Box>
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, letterSpacing: '-0.01em' }}>
+                  Conference Meeting Reports
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Filter the meetings you need, then export in your preferred format
+                </Typography>
+              </Box>
+            </Stack>
+          </Box>
+
+          <Box sx={{ p: { xs: 2, sm: 3 } }}>
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mb: 1.5,
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: 'text.secondary',
+                fontSize: '0.6875rem',
+              }}
+            >
+              Filters
+            </Typography>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="From date"
+                  value={reportFilters.start_date}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, start_date: e.target.value }))}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="To date"
+                  value={reportFilters.end_date}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, end_date: e.target.value }))}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  select
+                  label="Status"
+                  value={reportFilters.status}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, status: e.target.value }))}
+                  slotProps={{
+                    inputLabel: { shrink: true },
+                    select: { MenuProps: selectMenuSlotProps },
+                  }}
+                >
+                  <MenuItem value="">All Statuses</MenuItem>
+                  {CONFERENCE_STATUS.map((s) => (
+                    <MenuItem key={s} value={s}>{formatLabel(s)}</MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ mb: 3 }} />
+
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: 'center', mb: 2, justifyContent: 'space-between' }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  color: 'text.secondary',
+                  fontSize: '0.6875rem',
+                }}
+              >
+                Export Format
+              </Typography>
+              {(reportFilters.start_date || reportFilters.end_date || reportFilters.status) && (
+                <Chip
+                  size="small"
+                  label="Filters applied"
+                  color="primary"
+                  variant="outlined"
+                  onDelete={() => setReportFilters({ start_date: '', end_date: '', status: '' })}
+                  sx={{ fontWeight: 600 }}
+                />
+              )}
+            </Stack>
+
+            <Grid container spacing={2}>
+              {EXPORT_FORMATS.map((format) => {
+                const Icon = format.icon;
+                const busy = exporting === format.value;
+                return (
+                  <Grid key={format.value} size={{ xs: 12, sm: 6, md: 3 }}>
+                    <Box
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Download ${format.label} report`}
+                      onClick={() => !exporting && handleExport(format.value)}
+                      onKeyDown={(e) => {
+                        if ((e.key === 'Enter' || e.key === ' ') && !exporting) {
+                          e.preventDefault();
+                          handleExport(format.value);
+                        }
+                      }}
+                      sx={{
+                        height: '100%',
+                        p: 2.25,
+                        borderRadius: 2.5,
+                        textAlign: 'center',
+                        cursor: exporting ? 'default' : 'pointer',
+                        opacity: exporting && !busy ? 0.55 : 1,
+                        border: '1.5px solid',
+                        borderColor: (theme) => alpha(theme.palette[format.color].main, 0.25),
+                        bgcolor: 'background.paper',
+                        transition: 'all 160ms ease',
+                        '&:hover': exporting ? {} : {
+                          borderColor: (theme) => theme.palette[format.color].main,
+                          bgcolor: (theme) => alpha(theme.palette[format.color].main, 0.05),
+                          transform: 'translateY(-2px)',
+                          boxShadow: (theme) => `0 6px 20px ${alpha(theme.palette[format.color].main, 0.18)}`,
+                        },
+                        '&:focus-visible': {
+                          outline: (theme) => `2px solid ${theme.palette[format.color].main}`,
+                          outlineOffset: 2,
+                        },
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 46,
+                          height: 46,
+                          mx: 'auto',
+                          mb: 1.25,
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          bgcolor: (theme) => alpha(theme.palette[format.color].main, 0.1),
+                          color: `${format.color}.main`,
+                        }}
+                      >
+                        {busy
+                          ? <CircularProgress size={20} color={format.color} />
+                          : <Icon sx={{ fontSize: 23 }} />}
+                      </Box>
+                      <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.25 }}>
+                        {busy ? 'Preparing…' : format.label}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {format.hint}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                );
+              })}
+            </Grid>
+
+            <Stack direction="row" spacing={1} sx={{ mt: 3, alignItems: 'center' }}>
+              <DownloadOutlined sx={{ fontSize: 17, color: 'text.disabled' }} />
+              <Typography variant="caption" color="text.secondary">
+                Reports include conference ID, patient, GP, AHP, date, time, and status.
+              </Typography>
+            </Stack>
+          </Box>
+        </Paper>
+      )}
+
       <Dialog
         open={linkPopup.open}
-        onClose={() => setLinkPopup({ open: false, url: '', code: '' })}
+        onClose={() => setLinkPopup({ open: false, url: '', code: '', status: '' })}
         maxWidth="sm"
         fullWidth
         slotProps={{
           paper: {
             sx: {
               borderRadius: 3,
-              overflow: 'hidden',
               boxShadow: '0 24px 64px rgba(15, 23, 42, 0.18)',
             },
           },
@@ -422,7 +1104,25 @@ const Conferences = () => {
               {linkPopup.url}
             </Typography>
           </Paper>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2.5 }}>
+          {linkPopup.status === 'completed' && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+              This meeting has ended. The link is kept for your records.
+            </Typography>
+          )}
+        </DialogContent>
+        {linkPopup.status !== 'completed' && (
+          <DialogActions
+            sx={{
+              px: 3,
+              py: 2.5,
+              bgcolor: 'background.default',
+              borderTop: '1px solid',
+              borderColor: 'divider',
+              flexDirection: { xs: 'column', sm: 'row' },
+              gap: 1.5,
+              '& > :not(:first-of-type)': { ml: { xs: 0, sm: 0 } },
+            }}
+          >
             <Button
               fullWidth
               variant="outlined"
@@ -435,13 +1135,183 @@ const Conferences = () => {
               fullWidth
               variant="contained"
               startIcon={<OpenInNewOutlined />}
-              href={linkPopup.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={handleOpenLinkExternal}
             >
               Open Link
             </Button>
+          </DialogActions>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={docPreview.open}
+        onClose={closeDocPreview}
+        maxWidth="lg"
+        fullWidth
+        slotProps={{
+          paper: {
+            sx: {
+              borderRadius: 3,
+              overflow: 'hidden',
+              boxShadow: '0 24px 64px rgba(15, 23, 42, 0.22)',
+            },
+          },
+        }}
+      >
+        <Box
+          sx={{
+            px: 2.5,
+            py: 2,
+            color: 'common.white',
+            background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 55%, ${theme.palette.primary.light} 100%)`,
+          }}
+        >
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+            <Box
+              sx={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                display: 'grid',
+                placeItems: 'center',
+                bgcolor: alpha('#FFFFFF', 0.15),
+              }}
+            >
+              {docPreview.mode === 'pdf' ? (
+                <PictureAsPdfOutlined sx={{ fontSize: 20 }} />
+              ) : (
+                <DescriptionOutlined sx={{ fontSize: 20 }} />
+              )}
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="caption" sx={{ opacity: 0.85, fontWeight: 700, letterSpacing: '0.08em' }}>
+                DOCUMENT PREVIEW
+              </Typography>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }} noWrap>
+                {docPreview.fileName}
+              </Typography>
+            </Box>
+            {docPreview.row && canDownloadDocuments && (
+              <Tooltip title="Download">
+                <IconButton
+                  size="small"
+                  onClick={() => openDocument(docPreview.row, { download: true })}
+                  sx={{
+                    color: 'common.white',
+                    bgcolor: alpha('#FFFFFF', 0.12),
+                    '&:hover': { bgcolor: alpha('#FFFFFF', 0.22) },
+                  }}
+                >
+                  <DownloadOutlined sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            )}
+            <Tooltip title="Close preview">
+              <IconButton
+                size="small"
+                onClick={closeDocPreview}
+                sx={{
+                  color: 'common.white',
+                  bgcolor: alpha('#FFFFFF', 0.12),
+                  '&:hover': { bgcolor: alpha('#FFFFFF', 0.22) },
+                }}
+              >
+                <CloseOutlined sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Stack>
+        </Box>
+
+        <DialogContent sx={{ p: 0, bgcolor: '#4a4f56' }}>
+          {docPreview.loading ? (
+            <Stack alignItems="center" justifyContent="center" sx={{ py: 14 }}>
+              <CircularProgress sx={{ color: 'common.white' }} />
+              <Typography variant="body2" sx={{ mt: 2, color: 'grey.300', fontWeight: 500 }}>
+                Opening document…
+              </Typography>
+            </Stack>
+          ) : docPreview.mode === 'pdf' ? (
+            <Box
+              component="iframe"
+              title={docPreview.fileName}
+              src={docPreview.url}
+              sx={{ width: '100%', height: { xs: '60vh', md: '72vh' }, border: 0, display: 'block' }}
+            />
+          ) : docPreview.mode === 'docx' ? (
+            <Box sx={{ p: { xs: 2, sm: 3 }, maxHeight: { xs: '60vh', md: '72vh' }, overflow: 'auto' }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  maxWidth: 820,
+                  mx: 'auto',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+                  border: '1px solid',
+                  borderColor: alpha('#FFFFFF', 0.08),
+                }}
+              >
+                <Box
+                  sx={{
+                    p: { xs: 3, sm: 5 },
+                    bgcolor: 'background.paper',
+                    color: 'text.primary',
+                    fontFamily: '"Segoe UI", system-ui, sans-serif',
+                    '& p': { mb: 1.5, lineHeight: 1.75, fontSize: '0.9375rem' },
+                    '& h1': {
+                      fontSize: '1.75rem',
+                      fontWeight: 800,
+                      color: 'primary.dark',
+                      mb: 0.5,
+                      letterSpacing: '-0.02em',
+                    },
+                    '& h2, & h3': { mt: 2.5, mb: 1, fontWeight: 700, color: 'primary.main' },
+                    '& strong': { fontWeight: 700, color: 'text.primary' },
+                    '& table': {
+                      width: '100%',
+                      borderCollapse: 'collapse',
+                      my: 2.5,
+                      fontSize: '0.875rem',
+                    },
+                    '& td, & th': {
+                      border: '1px solid',
+                      borderColor: alpha('#64748B', 0.25),
+                      p: 1.25,
+                      verticalAlign: 'top',
+                    },
+                    '& th': {
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
+                      fontWeight: 700,
+                      width: '32%',
+                      color: 'text.secondary',
+                    },
+                  }}
+                  dangerouslySetInnerHTML={{ __html: docPreview.html }}
+                />
+              </Paper>
+            </Box>
+          ) : (
+            <Stack alignItems="center" justifyContent="center" sx={{ py: 10, px: 3 }}>
+              <DescriptionOutlined sx={{ fontSize: 52, color: 'grey.400', mb: 2 }} />
+              <Typography variant="body1" sx={{ color: 'grey.200', fontWeight: 600 }}>
+                Preview is not available for this file type
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'grey.400', mt: 0.5, mb: 2.5, textAlign: 'center' }}>
+                {canDownloadDocuments
+                  ? 'Download the file to open it in another application.'
+                  : 'Preview is not available for this file type. Contact your administrator if you need a copy.'}
+              </Typography>
+              {docPreview.row && canDownloadDocuments && (
+                <Button
+                  variant="contained"
+                  startIcon={<DownloadOutlined />}
+                  onClick={() => openDocument(docPreview.row, { download: true })}
+                >
+                  Download file
+                </Button>
+              )}
+            </Stack>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -479,6 +1349,15 @@ const Conferences = () => {
           />
         </form>
       </Dialog>
+
+      <ConferenceAttendanceDialog
+        open={attendanceOpen}
+        conferenceId={attendanceConferenceId}
+        onClose={() => {
+          setAttendanceOpen(false);
+          setAttendanceConferenceId(null);
+        }}
+      />
     </>
   );
 };

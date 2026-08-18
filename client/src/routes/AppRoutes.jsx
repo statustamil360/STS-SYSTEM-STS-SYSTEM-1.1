@@ -25,6 +25,9 @@ const AuditLogs = lazy(() => import('../pages/shared/AuditLogs'));
 const Notifications = lazy(() => import('../pages/shared/Notifications'));
 const MedicalNotes = lazy(() => import('../pages/GP/MedicalNotes'));
 const PatientReports = lazy(() => import('../pages/AHP/PatientReports'));
+const JoinTimeReport = lazy(() => import('../pages/shared/JoinTimeReport'));
+const GuestConferenceLogin = lazy(() => import('../pages/GuestConferenceLogin'));
+const ConferenceDocumentPreview = lazy(() => import('../pages/shared/ConferenceDocumentPreview'));
 
 const Receptionists = lazy(() =>
   import('../pages/shared/StaffManagement').then((m) => ({ default: m.Receptionists }))
@@ -41,6 +44,7 @@ const AppRoutes = () => (
     <Routes>
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<Login />} />
+        <Route path="/guest-conference" element={<GuestConferenceLogin />} />
       </Route>
 
       <Route element={<ProtectedRoute />}>
@@ -51,6 +55,9 @@ const AppRoutes = () => (
 
           <Route element={<ProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]} />}>
             <Route path="/admins" element={<AdminManagement />} />
+          </Route>
+
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]} />}>
             <Route path="/performance" element={<Performance />} />
           </Route>
 
@@ -74,10 +81,15 @@ const AppRoutes = () => (
             <Route path="/ahps" element={<AHPs />} />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP, ROLES.ADMIN, ROLES.SUPER_ADMIN]} />}>
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP, ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.CONFERENCE_GUEST]} />}>
             <Route path="/conferences" element={<Conferences />} />
             <Route path="/conferences/:id/room" element={<ConferenceRoom />} />
+            <Route path="/conferences/:conferenceId/documents/:fileId/preview" element={<ConferenceDocumentPreview />} />
             <Route path="/tasks" element={<Tasks />} />
+          </Route>
+
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.ADMIN]} />}>
+            <Route path="/join-time-report" element={<JoinTimeReport />} />
           </Route>
 
           <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST]} />}>

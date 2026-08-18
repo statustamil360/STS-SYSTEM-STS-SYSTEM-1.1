@@ -1,7 +1,38 @@
+const fs = require('fs');
+const path = require('path');
 const pool = require('../config/db');
 const { ensureConferenceSequence, allocateConferenceCode } = require('../utils/conferenceId');
 const videoService = require('../services/videoService');
 const { processTimedOutConferences } = require('../services/conferenceTimeoutService');
+const { buildExport } = require('../services/exportService');
+const { createAuditLog } = require('../middleware/auditLog');
+const { assertClinicalDocumentDownload } = require('../middleware/receptionistPermission');
+const { ensureReportRows, lockReportsAfterMeeting } = require('../services/clinicalReportService');
+const { generateParticipantDocuments } = require('../services/clinicalDocumentService');
+const {
+  startSession, endSession, endAllSessions, getConferenceAttendance, getJoinTimeReport,
+} = require('../services/conferenceAttendanceService');
+
+const JOIN_TIME_EXPORT_COLUMNS = [
+  { key: 'conference_code', header: 'Conference ID', width: 16 },
+  { key: 'patient_name', header: 'Patient', width: 22 },
+  { key: 'meeting_date', header: 'Date', width: 14 },
+  { key: 'meeting_time', header: 'Time', width: 12 },
+  { key: 'participant_name', header: 'Participant', width: 22 },
+  { key: 'participant_role', header: 'Role', width: 10 },
+  { key: 'joined_at', header: 'Joined At', width: 22 },
+  { key: 'left_at', header: 'Left At', width: 22 },
+  { key: 'duration_label', header: 'Duration', width: 14 },
+];
+
+const conferenceFromClause = `
+  FROM conferences c
+  JOIN patients pat ON c.patient_id = pat.id
+  LEFT JOIN gps gp ON c.gp_id = gp.id
+  LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
+  LEFT JOIN allied_health_professionals ahp ON c.ahp_id = ahp.id
+  LEFT JOIN user_profiles ahp_p ON ahp.user_id = ahp_p.user_id
+`;
 
 const conferenceSelectBase = `
   SELECT c.id, c.conference_code, c.appointment_id, c.patient_id, c.gp_id, c.ahp_id,
@@ -22,12 +53,7 @@ const conferenceSelectBase = `
            LEFT JOIN user_profiles cp_p ON cp_p.user_id = cp_u.id
            WHERE cp.conference_id = c.id AND cp.role_in_conference = 'ahp'
          ) AS ahp_participants
-  FROM conferences c
-  JOIN patients pat ON c.patient_id = pat.id
-  LEFT JOIN gps gp ON c.gp_id = gp.id
-  LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
-  LEFT JOIN allied_health_professionals ahp ON c.ahp_id = ahp.id
-  LEFT JOIN user_profiles ahp_p ON ahp.user_id = ahp_p.user_id
+  ${conferenceFromClause}
 `;
 
 const applyRoleFilter = async (req, query, params) => {
@@ -88,6 +114,14 @@ const isAssignedParticipant = async (conference, user) => {
     );
     return rows.length > 0;
   }
+  if (user.role === 'conference_guest') {
+    const [rows] = await pool.execute(
+      `SELECT id FROM conference_guest_access
+       WHERE conference_id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW()`,
+      [conference.id, user.id]
+    );
+    return rows.length > 0;
+  }
   return ['receptionist', 'admin', 'super_admin'].includes(user.role);
 };
 
@@ -96,26 +130,33 @@ exports.getAll = async (req, res, next) => {
     await processTimedOutConferences();
     const { search, status, date, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
-    let query = `${conferenceSelectBase} WHERE 1=1`;
+    let where = 'WHERE 1=1';
     const params = [];
 
-    query = await applyRoleFilter(req, query, params);
+    where = await applyRoleFilter(req, where, params);
 
-    if (status) { query += ' AND c.status = ?'; params.push(status); }
-    if (date) { query += ' AND c.scheduled_date = ?'; params.push(date); }
+    if (status) { where += ' AND c.status = ?'; params.push(status); }
+    if (req.query.scope === 'history') {
+      where += " AND c.status IN ('completed', 'cancelled')";
+    }
+    if (date) { where += ' AND c.scheduled_date = ?'; params.push(date); }
     if (search) {
-      query += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
+      where += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
         OR CONCAT(gp_p.first_name, ' ', gp_p.last_name) LIKE ? OR CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) LIKE ?)`;
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const [countResult] = await pool.execute(
-      query.replace(/SELECT c\.\*.*FROM conferences c/s, 'SELECT COUNT(*) as total FROM conferences c'),
+      `SELECT COUNT(*) AS total ${conferenceFromClause} ${where}`,
       params
     );
-    query += ' ORDER BY c.scheduled_date DESC, c.scheduled_time DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit, 10), parseInt(offset, 10));
-    const [rows] = await pool.execute(query, params);
+
+    const [rows] = await pool.execute(
+      `${conferenceSelectBase} ${where}
+       ORDER BY c.scheduled_date DESC, c.scheduled_time DESC
+       LIMIT ? OFFSET ?`,
+      [...params, parseInt(limit, 10), parseInt(offset, 10)]
+    );
 
     res.json({
       success: true,
@@ -138,19 +179,29 @@ const SCHEDULE_RANGES = {
 
 const ACTIVE_CARD_STATUSES = ['scheduled', 'waiting', 'live'];
 
+const DOCUMENT_MIME_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
 exports.getSchedule = async (req, res, next) => {
   try {
     await processTimedOutConferences();
     const range = SCHEDULE_RANGES[req.query.range] ? req.query.range : 'today';
     let query = `${conferenceScheduleBase} WHERE (${SCHEDULE_RANGES[range]})
-      AND c.status NOT IN ('cancelled')
+      AND c.status IN (${ACTIVE_CARD_STATUSES.map(() => '?').join(', ')})
       AND (c.appointment_id IS NULL OR ap.status IS NULL OR ap.status <> 'cancelled')`;
-    const params = [];
-
-    if (range === 'month') {
-      query += ` AND c.status IN (${ACTIVE_CARD_STATUSES.map(() => '?').join(', ')})`;
-      params.push(...ACTIVE_CARD_STATUSES);
-    }
+    const params = [...ACTIVE_CARD_STATUSES];
 
     query = await applyRoleFilter(req, query, params);
     query += ` ORDER BY
@@ -160,6 +211,203 @@ exports.getSchedule = async (req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json({ success: true, data: rows, range });
   } catch (err) { next(err); }
+};
+
+exports.getDocuments = async (req, res, next) => {
+  try {
+    const { search, page = 1, limit = 10 } = req.query;
+    const offset = (page - 1) * limit;
+
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    where = await applyRoleFilter(req, where, params);
+
+    if (search) {
+      where += ` AND (c.conference_code LIKE ? OR d.original_name LIKE ?
+        OR d.participant_name LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const fromClause = `
+      FROM conference_generated_documents d
+      JOIN conferences c ON c.id = d.conference_id
+      JOIN patients pat ON pat.id = c.patient_id
+      LEFT JOIN gps gp ON c.gp_id = gp.id
+      LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
+    `;
+
+    const [countRows] = await pool.execute(
+      `SELECT COUNT(*) AS total ${fromClause} ${where}`,
+      params
+    );
+
+    const listParams = [...params, parseInt(limit, 10), parseInt(offset, 10)];
+    const [rows] = await pool.execute(
+      `SELECT d.id AS file_id, d.original_name, d.file_size, d.file_type AS mime_type,
+              d.created_at AS uploaded_at, d.participant_name,
+              c.id AS conference_id, c.conference_code, c.status,
+              DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS scheduled_date,
+              TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS scheduled_time,
+              CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
+              CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
+              'generated' AS source
+       ${fromClause} ${where}
+       ORDER BY d.created_at DESC, d.id DESC
+       LIMIT ? OFFSET ?`,
+      listParams
+    );
+
+    res.json({
+      success: true,
+      data: rows,
+      pagination: { total: countRows[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
+    });
+  } catch (err) { next(err); }
+};
+
+exports.viewGeneratedDocument = async (req, res, next) => {
+  try {
+    if (!(await assertClinicalDocumentDownload(req, res))) return;
+
+    const { id, fileId } = req.params;
+    const [rows] = await pool.execute(
+      `SELECT d.original_name, d.stored_name, d.file_path, d.file_type
+       FROM conference_generated_documents d
+       JOIN conferences c ON c.id = d.conference_id
+       WHERE d.id = ? AND c.id = ?`,
+      [fileId, id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    const file = rows[0];
+    const absolutePath = path.isAbsolute(file.file_path)
+      ? file.file_path
+      : path.join(__dirname, '..', file.file_path);
+
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ success: false, message: 'Document not found on disk' });
+    }
+
+    const mimeMap = {
+      pdf: 'application/pdf',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+    const mimeType = mimeMap[file.file_type] || 'application/octet-stream';
+    const safeName = String(file.original_name || 'document').replace(/"/g, '');
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
+    res.sendFile(absolutePath);
+  } catch (err) { next(err); }
+};
+
+exports.viewDocument = async (req, res, next) => {
+  try {
+    if (!(await assertClinicalDocumentDownload(req, res))) return;
+
+    const { id, fileId } = req.params;
+    const [rows] = await pool.execute(
+      `SELECT f.original_name, f.stored_name, f.file_path, f.mime_type
+       FROM appointment_files f
+       JOIN conferences c ON c.appointment_id = f.appointment_id
+       WHERE f.id = ? AND c.id = ?`,
+      [fileId, id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    const file = rows[0];
+    const absolutePath = path.isAbsolute(file.file_path)
+      ? file.file_path
+      : path.join(__dirname, '..', file.file_path);
+
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ success: false, message: 'Document not found on disk' });
+    }
+
+    const extension = path.extname(file.original_name || file.stored_name || '').toLowerCase();
+    const mimeType = file.mime_type || DOCUMENT_MIME_BY_EXT[extension] || 'application/octet-stream';
+    const safeName = String(file.original_name || file.stored_name || 'document').replace(/"/g, '');
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
+    res.sendFile(absolutePath);
+  } catch (err) { next(err); }
+};
+
+const EXPORT_COLUMNS = [
+  { key: 'conference_code', header: 'Conference ID', width: 16 },
+  { key: 'patient_name', header: 'Patient', width: 24 },
+  { key: 'gp_name', header: 'GP', width: 22 },
+  { key: 'ahp_name', header: 'AHP', width: 22 },
+  { key: 'scheduled_date', header: 'Date', width: 14 },
+  { key: 'scheduled_time', header: 'Time', width: 12 },
+  { key: 'status', header: 'Status', width: 14 },
+];
+
+exports.exportReport = async (req, res, next) => {
+  try {
+    const { format = 'csv', status, start_date, end_date, search } = req.query;
+
+    let query = `${conferenceSelectBase} WHERE 1=1`;
+    const params = [];
+
+    query = await applyRoleFilter(req, query, params);
+
+    if (status) { query += ' AND c.status = ?'; params.push(status); }
+    if (start_date) { query += ' AND c.scheduled_date >= ?'; params.push(start_date); }
+    if (end_date) { query += ' AND c.scheduled_date <= ?'; params.push(end_date); }
+    if (search) {
+      query += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    query += ' ORDER BY c.scheduled_date DESC, c.scheduled_time DESC';
+    const [rows] = await pool.execute(query, params);
+
+    const formatted = rows.map((row) => ({
+      ...row,
+      gp_name: (row.gp_name || '').trim() || 'Unassigned',
+      ahp_name: (row.ahp_participants || (row.ahp_name || '').trim() || 'Unassigned'),
+      status: String(row.status || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    }));
+
+    const range = start_date || end_date
+      ? `${start_date || 'Earliest'} to ${end_date || 'Latest'}`
+      : 'All dates';
+
+    const { buffer, mimeType, fileName } = await buildExport(format, {
+      columns: EXPORT_COLUMNS,
+      rows: formatted,
+      title: 'Conference Meetings Report',
+      subtitle: `${range} • ${formatted.length} record(s) • Generated ${new Date().toLocaleString()}`,
+      fileName: `conference-report-${new Date().toISOString().slice(0, 10)}`,
+    });
+
+    await createAuditLog({
+      userId: req.user.id,
+      action: 'export',
+      entityType: 'conference',
+      details: { format, status: status || 'all', start_date, end_date, count: formatted.length },
+      ipAddress: req.ip,
+    });
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    next(err);
+  }
 };
 
 exports.getById = async (req, res, next) => {
@@ -259,26 +507,16 @@ exports.accept = async (req, res, next) => {
     if (['completed', 'cancelled'].includes(conference.status)) {
       return res.status(400).json({ success: false, message: 'This conference is no longer available' });
     }
-
-    const room = await videoService.ensureRoom(conference.conference_code);
-    const [profile] = await pool.execute(
-      'SELECT first_name, last_name FROM user_profiles WHERE user_id = ?',
-      [req.user.id]
-    );
-    const userName = profile.length
-      ? `${profile[0].first_name} ${profile[0].last_name}`.trim()
-      : 'GP';
-
-    const token = await videoService.createMeetingToken({
-      roomName: room.roomId,
-      userName,
-      isOwner: true,
-    });
+    if (['waiting', 'live'].includes(conference.status)) {
+      return res.json({ success: true, message: 'Meeting already accepted', data: { status: conference.status } });
+    }
 
     await pool.execute(
-      `UPDATE conferences SET status = 'live', accepted_at = NOW(), accepted_by = ?, room_id = ? WHERE id = ?`,
-      [req.user.id, room.roomId, conference.id]
+      `UPDATE conferences SET status = 'waiting', accepted_at = NOW(), accepted_by = ? WHERE id = ?`,
+      [req.user.id, conference.id]
     );
+
+    await ensureReportRows(conference.id);
 
     await pool.execute(
       `INSERT INTO notifications (user_id, title, message, type)
@@ -289,13 +527,8 @@ exports.accept = async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Meeting accepted',
-      data: {
-        provider: room.provider,
-        roomUrl: room.roomUrl,
-        roomId: room.roomId,
-        token,
-      },
+      message: 'Meeting accepted — AHP participants can now join',
+      data: { status: 'waiting' },
     });
   } catch (err) { next(err); }
 };
@@ -306,7 +539,7 @@ exports.join = async (req, res, next) => {
     if (!conference) {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
-    if (!['gp', 'ahp'].includes(req.user.role)) {
+    if (!['gp', 'ahp', 'conference_guest'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Only clinical staff can join meetings' });
     }
 
@@ -315,10 +548,24 @@ exports.join = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
     }
 
-    if (req.user.role === 'ahp' && conference.status !== 'live') {
+    if (req.user.role === 'ahp' && !['waiting', 'live'].includes(conference.status)) {
       return res.status(403).json({
         success: false,
         message: 'Meeting has not been accepted by the GP yet',
+      });
+    }
+
+    if (req.user.role === 'gp' && !['waiting', 'live'].includes(conference.status)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please accept the meeting before joining',
+      });
+    }
+
+    if (req.user.role === 'conference_guest' && !['waiting', 'live'].includes(conference.status)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Meeting is not open for guests yet',
       });
     }
 
@@ -327,40 +574,85 @@ exports.join = async (req, res, next) => {
     }
 
     const room = await videoService.ensureRoom(conference.conference_code);
+    const iceServers = videoService.getIceServers();
     const [profile] = await pool.execute(
       'SELECT first_name, last_name FROM user_profiles WHERE user_id = ?',
       [req.user.id]
     );
-    const userName = profile.length
+    const displayName = profile.length
       ? `${profile[0].first_name} ${profile[0].last_name}`.trim()
       : req.user.role.toUpperCase();
 
-    const token = await videoService.createMeetingToken({
-      roomName: room.roomId,
-      userName,
-      isOwner: req.user.role === 'gp',
-    });
-
-    if (conference.status !== 'live' && req.user.role === 'gp') {
+    if (conference.status !== 'live') {
       await pool.execute(
         `UPDATE conferences SET status = 'live', room_id = ? WHERE id = ?`,
         [room.roomId, conference.id]
       );
     }
 
+    await ensureReportRows(conference.id);
+
     await pool.execute(
       'UPDATE conference_participants SET joined_at = COALESCE(joined_at, NOW()) WHERE conference_id = ? AND user_id = ?',
       [conference.id, req.user.id]
     );
 
+    await startSession(conference.id, req.user.id);
+
     res.json({
       success: true,
       data: {
         provider: room.provider,
-        roomUrl: room.roomUrl,
         roomId: room.roomId,
-        token,
+        iceServers,
+        displayName,
         conference: { id: conference.id, status: 'live', conference_code: conference.conference_code },
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+exports.leave = async (req, res, next) => {
+  try {
+    const conference = await getConferenceById(req.params.id);
+    if (!conference) {
+      return res.status(404).json({ success: false, message: 'Conference not found' });
+    }
+    if (!['gp', 'ahp', 'conference_guest'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only meeting participants can leave' });
+    }
+
+    await endSession(conference.id, req.user.id);
+    await pool.execute(
+      'UPDATE conference_participants SET left_at = NOW() WHERE conference_id = ? AND user_id = ?',
+      [conference.id, req.user.id]
+    );
+
+    res.json({ success: true, message: 'Left meeting — join time recorded' });
+  } catch (err) { next(err); }
+};
+
+exports.getAttendance = async (req, res, next) => {
+  try {
+    if (!['receptionist', 'admin', 'super_admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Attendance data is restricted to staff' });
+    }
+
+    const conference = await getConferenceById(req.params.id);
+    if (!conference) {
+      return res.status(404).json({ success: false, message: 'Conference not found' });
+    }
+
+    const attendance = await getConferenceAttendance(conference.id);
+    res.json({
+      success: true,
+      data: {
+        ...attendance,
+        conference_code: conference.conference_code,
+        patient_name: conference.patient_name,
+        scheduled_date: conference.scheduled_date,
+        scheduled_time: conference.scheduled_time,
+        status: conference.status,
       },
     });
   } catch (err) { next(err); }
@@ -381,9 +673,116 @@ exports.end = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
     }
 
-    await pool.execute(`UPDATE conferences SET status = 'completed' WHERE id = ?`, [conference.id]);
-    res.json({ success: true, message: 'Meeting ended' });
+    await pool.execute(
+      `UPDATE conferences SET status = 'completed', ended_at = NOW() WHERE id = ?`,
+      [conference.id]
+    );
+
+    await endAllSessions(conference.id);
+    await pool.execute(
+      `UPDATE conference_participants SET left_at = COALESCE(left_at, NOW()) WHERE conference_id = ?`,
+      [conference.id]
+    );
+
+    await lockReportsAfterMeeting(conference.id);
+
+    try {
+      await generateParticipantDocuments(conference.id);
+    } catch (docErr) {
+      console.error('Document generation failed:', docErr.message);
+    }
+
+    await pool.execute(
+      `INSERT INTO notifications (user_id, title, message, type)
+       SELECT u.id, ?, ?, ? FROM users u
+       JOIN roles r ON r.id = u.role_id
+       WHERE r.name = 'receptionist' AND u.status = 'active'`,
+      ['Conference Ended', `Meeting ${conference.conference_code} ended — clinical documents are ready`, 'conference']
+    );
+
+    res.json({ success: true, message: 'Meeting ended and documents generated' });
   } catch (err) { next(err); }
+};
+
+exports.getJoinTimeReport = async (req, res, next) => {
+  try {
+    if (!['receptionist', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Join time report is restricted to receptionist and admin' });
+    }
+
+    const report = await getJoinTimeReport({
+      date: req.query.date,
+      patient_id: req.query.patient_id || null,
+      role: req.query.role || null,
+      gp_id: req.query.gp_id || null,
+      ahp_id: req.query.ahp_id || null,
+    });
+
+    res.json({ success: true, data: report });
+  } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    next(err);
+  }
+};
+
+exports.exportJoinTimeReport = async (req, res, next) => {
+  try {
+    if (!['receptionist', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Join time report is restricted to receptionist and admin' });
+    }
+
+    const format = req.query.format || 'csv';
+    const report = await getJoinTimeReport({
+      date: req.query.date,
+      patient_id: req.query.patient_id || null,
+      role: req.query.role || null,
+      gp_id: req.query.gp_id || null,
+      ahp_id: req.query.ahp_id || null,
+    });
+
+    const { date, patient_id, role, gp_id, ahp_id } = report.filters;
+    const filterParts = [`Date: ${date}`];
+    if (patient_id) filterParts.push(`Patient ID: ${patient_id}`);
+    if (role) filterParts.push(`Role: ${String(role).toUpperCase()}`);
+    if (gp_id) filterParts.push(`GP ID: ${gp_id}`);
+    if (ahp_id) filterParts.push(`AHP ID: ${ahp_id}`);
+
+    const exportRows = report.rows.map((row) => ({
+      ...row,
+      participant_role: String(row.participant_role || '').replace(/_/g, ' ').toUpperCase(),
+      joined_at: row.joined_at ? new Date(row.joined_at).toLocaleString() : '—',
+      left_at: row.left_at ? new Date(row.left_at).toLocaleString() : '—',
+      meeting_time: String(row.meeting_time || '').slice(0, 5),
+    }));
+
+    const { buffer, mimeType, fileName } = await buildExport(format, {
+      columns: JOIN_TIME_EXPORT_COLUMNS,
+      rows: exportRows,
+      title: 'Participant Join Time Report',
+      subtitle: `${filterParts.join(' · ')} · Total: ${report.summary.grand_total_label} · ${exportRows.length} session(s)`,
+      fileName: `join-time-report-${date}`,
+    });
+
+    await createAuditLog({
+      userId: req.user.id,
+      action: 'export',
+      entityType: 'conference_join_time',
+      details: { format, ...report.filters, count: exportRows.length },
+      ipAddress: req.ip,
+    });
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+    next(err);
+  }
 };
 
 exports.remove = async (req, res, next) => {

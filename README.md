@@ -123,8 +123,12 @@ Update `server/.env` as needed:
 | `JWT_SECRET` | Access token secret — **change for production** |
 | `JWT_REFRESH_SECRET` | Refresh token secret — **change for production** |
 | `CLIENT_URL` | Frontend URL (default: `http://localhost:5173`) |
-| `DAILY_API_KEY` | Optional Daily.co API key for production video rooms |
-| `DAILY_DOMAIN` | Optional Daily.co domain (when using Daily) |
+| `WEBRTC_ANNOUNCED_IP` | Public VPS IP for WebRTC (production) |
+| `STUN_URLS` | STUN server(s), comma-separated |
+| `TURN_URL` | TURN server URL (coturn on your VPS) |
+| `TURN_SECRET` | Shared secret matching coturn `static-auth-secret` |
+
+See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md) for full private video setup on Ubuntu/aaPanel.
 
 > **Do not commit `server/.env` to version control.** Use `.env.example` as the template only.
 
@@ -433,20 +437,27 @@ See the final submission checklist provided with this documentation update, or v
 
 
 
-Super Admin
-superadmin@amc.com            Admin@123
+###  Super Admin
+superadmin@amc.com            
+Admin@123
 
-Admin
-admin@amc.com                 Admin@123
+###  Admin
+admin@amc.com                 
+Admin@123
 
-Receptionist
-receptionist@amc.com          Admin@123
-Sangeetha@info.com            12345678
+###  Receptionist
+receptionist@amc.com          
+Admin@123
 
-GP
-gp@amc.com                    Admin@123
+Sangeetha@info.com            
+12345678
 
-AHP
-ahp@amc.com                   Admin@123
+###  GP
+gp@amc.com                    
+Admin@123
+
+###  AHP
+ahp@amc.com                   
+Admin@123
 
 

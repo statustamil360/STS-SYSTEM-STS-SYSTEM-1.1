@@ -23,6 +23,10 @@ const PAGE_META = {
     title: 'Appointments',
     subtitle: 'Book conference appointments with patients, GPs, and multiple AHP professions',
   },
+  '/join-time-report': {
+    title: 'Join Time Report',
+    subtitle: 'Calculate participant meeting join times by date, patient, and role for salary records',
+  },
   '/tasks': {
     title: 'Tasks',
     subtitle: (role) => (CLINICAL_ROLES.includes(role)

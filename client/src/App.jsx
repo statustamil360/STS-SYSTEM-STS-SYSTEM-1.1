@@ -10,11 +10,14 @@ import AppRoutes from './routes/AppRoutes';
 import SessionGuard from './components/SessionGuard';
 import { fetchProfile } from './redux/slices/authSlice';
 import { fetchSystemSettings } from './redux/slices/settingsSlice';
+import { setDarkMode } from './redux/slices/uiSlice';
+import { canRoleUseDarkMode } from './hooks/useDarkModeAccess';
 
 const ThemedApp = () => {
   const dispatch = useDispatch();
   const { isAuthenticated, user } = useSelector((state) => state.auth);
   const { darkMode } = useSelector((state) => state.ui);
+  const settings = useSelector((state) => state.settings);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -22,6 +25,14 @@ const ThemedApp = () => {
       dispatch(fetchSystemSettings());
     }
   }, [dispatch, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user || !settings.loaded) return;
+    const allowed = canRoleUseDarkMode(user.role, settings);
+    if (!allowed && darkMode) {
+      dispatch(setDarkMode(false));
+    }
+  }, [dispatch, isAuthenticated, user, settings, darkMode]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return undefined;
