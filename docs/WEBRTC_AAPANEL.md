@@ -130,11 +130,12 @@ Reload Nginx after saving.
 ## 5. Deploy app
 
 ```bash
-cd /www/wwwroot/your-site
+cd /www/wwwroot/AMCCONFERENCEVTWO/server
 npm install
-npm run build
 # Restart Node app in aaPanel (PM2 / Node project)
 ```
+
+`mysql2` must be present in `server/package.json` so this install includes the database driver. If the app is started with `npm start`, a prestart check will install `mysql2` automatically when it is missing.
 
 On first start, logs should show:
 
