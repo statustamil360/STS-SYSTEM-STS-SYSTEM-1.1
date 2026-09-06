@@ -9,10 +9,18 @@ const getSocketUrl = () => {
   return window.location.origin;
 };
 
-const useConferenceSocket = (conferenceId, onReportUpdated) => {
+const normalizeHandlers = (second, third) => {
+  if (second && typeof second === 'object') return second;
+  return {
+    onReportUpdated: second,
+    onConferenceEnded: third,
+  };
+};
+
+const useConferenceSocket = (conferenceId, second, third) => {
   const socketRef = useRef(null);
-  const handlerRef = useRef(onReportUpdated);
-  handlerRef.current = onReportUpdated;
+  const handlersRef = useRef(normalizeHandlers(second, third));
+  handlersRef.current = normalizeHandlers(second, third);
 
   useEffect(() => {
     if (!conferenceId) return undefined;
@@ -21,7 +29,7 @@ const useConferenceSocket = (conferenceId, onReportUpdated) => {
     const socket = io(getSocketUrl(), {
       path: '/socket.io',
       auth: { token },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
     });
 
     socketRef.current = socket;
@@ -31,7 +39,19 @@ const useConferenceSocket = (conferenceId, onReportUpdated) => {
     });
 
     socket.on('report-updated', (payload) => {
-      handlerRef.current?.(payload);
+      handlersRef.current.onReportUpdated?.(payload);
+    });
+
+    socket.on('report-typing', (payload) => {
+      handlersRef.current.onReportTyping?.(payload);
+    });
+
+    socket.on('report-draft', (payload) => {
+      handlersRef.current.onReportDraft?.(payload);
+    });
+
+    socket.on('conference-ended', (payload) => {
+      handlersRef.current.onConferenceEnded?.(payload);
     });
 
     return () => {
@@ -45,7 +65,25 @@ const useConferenceSocket = (conferenceId, onReportUpdated) => {
     socketRef.current?.emit('report-update', { conferenceId, report });
   };
 
-  return { emitReportUpdate };
+  const emitReportTyping = ({ reportUserId, section, typing }) => {
+    socketRef.current?.emit('report-typing', {
+      conferenceId,
+      reportUserId,
+      section,
+      typing,
+    });
+  };
+
+  const emitReportDraft = ({ reportUserId, section, content }) => {
+    socketRef.current?.emit('report-draft', {
+      conferenceId,
+      reportUserId,
+      section,
+      content,
+    });
+  };
+
+  return { emitReportUpdate, emitReportTyping, emitReportDraft };
 };
 
 export default useConferenceSocket;

@@ -8,6 +8,22 @@ const CONFERENCE_SUBMENU = [
   { title: 'Reports', path: '/conferences?tab=reports', icon: 'Assessment' },
 ];
 
+const SETTINGS_SUBMENU = [
+  { title: 'Preferences', path: '/preferences', icon: 'Tune' },
+  { title: 'Profile', path: '/profile', icon: 'Person' },
+];
+
+const ADMIN_SETTINGS_SUBMENU = [
+  { title: 'Preferences', path: '/preferences', icon: 'Tune' },
+  { title: 'System Settings', path: '/settings', icon: 'Settings' },
+  { title: 'Profile', path: '/profile', icon: 'Person' },
+];
+
+const SUPER_ADMIN_SETTINGS_SUBMENU = [
+  { title: 'System Settings', path: '/settings', icon: 'Settings' },
+  { title: 'Profile', path: '/profile', icon: 'Person' },
+];
+
 export const MENU_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
     { section: 'Overview' },
@@ -20,9 +36,8 @@ export const MENU_CONFIG = {
     { section: 'Analytics' },
     { title: 'Reports', path: '/reports', icon: 'Assessment' },
     { section: 'System' },
-    { title: 'Settings', path: '/settings', icon: 'Settings' },
+    { title: 'Settings', icon: 'Settings', children: SUPER_ADMIN_SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
-    { title: 'Profile', path: '/profile', icon: 'Person' },
   ],
   [ROLES.ADMIN]: [
     { section: 'Overview' },
@@ -39,10 +54,8 @@ export const MENU_CONFIG = {
     { title: 'Audit Logs', path: '/audit-logs', icon: 'History' },
     { title: 'Join Time Report', path: '/join-time-report', icon: 'AccessTime' },
     { section: 'System' },
-    { title: 'Preferences', path: '/preferences', icon: 'Tune' },
-    { title: 'Settings', path: '/settings', icon: 'Settings' },
+    { title: 'Settings', icon: 'Settings', children: ADMIN_SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
-    { title: 'Profile', path: '/profile', icon: 'Person' },
   ],
   [ROLES.RECEPTIONIST]: [
     { section: 'Overview' },
@@ -57,9 +70,8 @@ export const MENU_CONFIG = {
     { title: 'General Practitioners', path: '/gps', icon: 'MedicalServices' },
     { title: 'Allied Health Professionals', path: '/ahps', icon: 'HealthAndSafety' },
     { section: 'System' },
-    { title: 'Preferences', path: '/preferences', icon: 'Tune' },
+    { title: 'Settings', icon: 'Settings', children: SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
-    { title: 'Profile', path: '/profile', icon: 'Person' },
   ],
   [ROLES.GP]: [
     { section: 'Overview' },
@@ -70,8 +82,8 @@ export const MENU_CONFIG = {
     { title: 'Medical Notes', path: '/medical-notes', icon: 'NoteAlt' },
     { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
     { section: 'System' },
+    { title: 'Settings', icon: 'Settings', children: SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
-    { title: 'Profile', path: '/profile', icon: 'Person' },
   ],
   [ROLES.AHP]: [
     { section: 'Overview' },
@@ -82,7 +94,7 @@ export const MENU_CONFIG = {
     { title: 'Patient Reports', path: '/patient-reports', icon: 'Description' },
     { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
     { section: 'System' },
+    { title: 'Settings', icon: 'Settings', children: SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
-    { title: 'Profile', path: '/profile', icon: 'Person' },
   ],
 };

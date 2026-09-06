@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box, Typography, Stack, Chip, Button, Alert, CircularProgress,
 } from '@mui/material';
@@ -10,13 +10,40 @@ import { ROLES } from '../utils/constants';
 
 const isGpRole = (role) => ['gp', 'guest_gp'].includes(role);
 
+const typingKey = (reportUserId, section) => `${reportUserId}:${section}`;
+
+const TypingDots = () => (
+  <Box component="span" sx={{ display: 'inline-flex', gap: '3px', ml: 0.6, alignItems: 'center' }}>
+    {[0, 1, 2].map((i) => (
+      <Box
+        key={i}
+        sx={{
+          width: 4,
+          height: 4,
+          borderRadius: '50%',
+          bgcolor: 'currentColor',
+          animation: 'stsChipTyping 1s ease-in-out infinite',
+          animationDelay: `${i * 0.16}s`,
+          '@keyframes stsChipTyping': {
+            '0%, 80%, 100%': { opacity: 0.35, transform: 'translateY(0)' },
+            '40%': { opacity: 1, transform: 'translateY(-2px)' },
+          },
+        }}
+      />
+    ))}
+  </Box>
+);
+
 const ConferenceReportPanel = ({ conferenceId, user, isAssignedGp, onRequestEdit }) => {
   const [reports, setReports] = useState([]);
   const [activeUserId, setActiveUserId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(null);
   const [canEdit, setCanEdit] = useState(true);
   const [editReason, setEditReason] = useState('');
+  const [typingMap, setTypingMap] = useState({});
+  const saveTimers = useRef({});
+  const typingStopTimers = useRef({});
+  const lastTypingEmit = useRef({});
 
   const fetchReports = useCallback(async () => {
     try {
@@ -47,34 +74,106 @@ const ConferenceReportPanel = ({ conferenceId, user, isAssignedGp, onRequestEdit
     setReports((prev) => prev.map((r) => (r.user_id === report.user_id ? report : r)));
   }, []);
 
-  const { emitReportUpdate } = useConferenceSocket(conferenceId, handleRemoteUpdate);
+  const handleRemoteTyping = useCallback(({ reportUserId, section, typing, userId }) => {
+    if (userId === user.id) return;
+    setTypingMap((prev) => {
+      const next = { ...prev };
+      if (section === '*') {
+        Object.keys(next).forEach((key) => {
+          if (key.startsWith(`${userId}:`) || key.startsWith(`${reportUserId}:`)) {
+            delete next[key];
+          }
+        });
+        return next;
+      }
+      const key = typingKey(reportUserId, section);
+      if (typing) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, [user.id]);
+
+  const handleRemoteDraft = useCallback(({ reportUserId, section, content, userId }) => {
+    if (userId === user.id || !section || !reportUserId) return;
+    setTypingMap((prev) => {
+      const next = { ...prev };
+      delete next[typingKey(reportUserId, section)];
+      return next;
+    });
+    setReports((prev) => prev.map((r) => (
+      r.user_id === reportUserId ? { ...r, [section]: content } : r
+    )));
+  }, [user.id]);
+
+  const { emitReportUpdate, emitReportTyping, emitReportDraft } = useConferenceSocket(conferenceId, {
+    onReportUpdated: handleRemoteUpdate,
+    onReportTyping: handleRemoteTyping,
+    onReportDraft: handleRemoteDraft,
+  });
 
   const activeReport = useMemo(
     () => reports.find((r) => r.user_id === activeUserId),
     [reports, activeUserId]
   );
 
-  const saveSection = async (section, content) => {
-    if (!activeReport || !canEdit) return;
-    setSaving(section);
+  const persistSection = useCallback(async (section, content, reportUserId) => {
     try {
       const { data } = await api.put(`/conferences/${conferenceId}/reports`, {
         section,
         content,
-        targetUserId: activeReport.user_id,
+        targetUserId: reportUserId,
       });
       setReports((prev) => prev.map((r) => (r.user_id === data.data.user_id ? data.data : r)));
       emitReportUpdate(data.data);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to save');
-    } finally {
-      setSaving(null);
     }
-  };
+  }, [conferenceId, emitReportUpdate]);
+
+  const commitSection = useCallback((section, content) => {
+    if (!activeReport || !canEdit) return;
+    const reportUserId = activeReport.user_id;
+    emitReportTyping({ reportUserId, section, typing: false });
+    emitReportDraft({ reportUserId, section, content });
+    setReports((prev) => prev.map((r) => (
+      r.user_id === reportUserId ? { ...r, [section]: content } : r
+    )));
+    clearTimeout(saveTimers.current[section]);
+    saveTimers.current[section] = setTimeout(() => {
+      persistSection(section, content, reportUserId);
+    }, 1200);
+  }, [activeReport, canEdit, emitReportDraft, emitReportTyping, persistSection]);
+
+  const handleTyping = useCallback((section) => {
+    if (!activeReport || !canEdit) return;
+    const reportUserId = activeReport.user_id;
+    const now = Date.now();
+    if (now - (lastTypingEmit.current[section] || 0) > 350) {
+      lastTypingEmit.current[section] = now;
+      emitReportTyping({ reportUserId, section, typing: true });
+    }
+    clearTimeout(typingStopTimers.current[section]);
+    typingStopTimers.current[section] = setTimeout(() => {
+      emitReportTyping({ reportUserId, section, typing: false });
+    }, 1400);
+  }, [activeReport, canEdit, emitReportTyping]);
+
+  useEffect(() => () => {
+    Object.values(saveTimers.current).forEach(clearTimeout);
+    Object.values(typingStopTimers.current).forEach(clearTimeout);
+  }, []);
 
   const showAssessment = activeReport && isGpRole(activeReport.participant_role);
   const showConclusion = activeReport && isGpRole(activeReport.participant_role) && (
     isAssignedGp || activeReport.participant_role === 'gp'
+  );
+
+  const chipIsTyping = (reportUserId) => Object.keys(typingMap).some(
+    (key) => key.startsWith(`${reportUserId}:`) && typingMap[key]
+  );
+
+  const sectionTyping = (section) => Boolean(
+    activeReport && typingMap[typingKey(activeReport.user_id, section)]
   );
 
   if (loading) {
@@ -92,17 +191,25 @@ const ConferenceReportPanel = ({ conferenceId, user, isAssignedGp, onRequestEdit
           Live Clinical Report
         </Typography>
         <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75 }}>
-          {reports.map((r) => (
-            <Chip
-              key={r.user_id}
-              label={r.display_name}
-              size="small"
-              color={activeUserId === r.user_id ? 'primary' : 'default'}
-              variant={activeUserId === r.user_id ? 'filled' : 'outlined'}
-              onClick={() => setActiveUserId(r.user_id)}
-              sx={{ fontWeight: 600, cursor: 'pointer' }}
-            />
-          ))}
+          {reports.map((r) => {
+            const typing = chipIsTyping(r.user_id);
+            return (
+              <Chip
+                key={r.user_id}
+                label={(
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
+                    {r.display_name}
+                    {typing && <TypingDots />}
+                  </Box>
+                )}
+                size="small"
+                color={activeUserId === r.user_id ? 'primary' : 'default'}
+                variant={activeUserId === r.user_id ? 'filled' : 'outlined'}
+                onClick={() => setActiveUserId(r.user_id)}
+                sx={{ fontWeight: 600, cursor: 'pointer' }}
+              />
+            );
+          })}
         </Stack>
       </Box>
 
@@ -123,34 +230,46 @@ const ConferenceReportPanel = ({ conferenceId, user, isAssignedGp, onRequestEdit
             {showAssessment && (
               <Box>
                 <Typography variant="caption" sx={{ fontWeight: 700, textTransform: 'uppercase', color: 'text.secondary' }}>
-                  Assessment {saving === 'assessment' && '· saving…'}
+                  Assessment
+                  {sectionTyping('assessment') ? ' · typing' : ''}
                 </Typography>
                 <ClinicalReportEditor
                   content={activeReport.assessment}
                   editable={canEdit}
-                  onChange={(html) => saveSection('assessment', html)}
+                  remoteTyping={sectionTyping('assessment')}
+                  typingName={activeReport.display_name}
+                  onTyping={() => handleTyping('assessment')}
+                  onChange={(html) => commitSection('assessment', html)}
                 />
               </Box>
             )}
             <Box>
               <Typography variant="caption" sx={{ fontWeight: 700, textTransform: 'uppercase', color: 'text.secondary' }}>
-                Recommendations {saving === 'recommendations' && '· saving…'}
+                Recommendations
+                {sectionTyping('recommendations') ? ' · typing' : ''}
               </Typography>
               <ClinicalReportEditor
                 content={activeReport.recommendations}
                 editable={canEdit}
-                onChange={(html) => saveSection('recommendations', html)}
+                remoteTyping={sectionTyping('recommendations')}
+                typingName={activeReport.display_name}
+                onTyping={() => handleTyping('recommendations')}
+                onChange={(html) => commitSection('recommendations', html)}
               />
             </Box>
             {showConclusion && (
               <Box>
                 <Typography variant="caption" sx={{ fontWeight: 700, textTransform: 'uppercase', color: 'text.secondary' }}>
-                  Conclusion (Outcomes to be achieved) {saving === 'conclusion' && '· saving…'}
+                  Conclusion (Outcomes to be achieved)
+                  {sectionTyping('conclusion') ? ' · typing' : ''}
                 </Typography>
                 <ClinicalReportEditor
                   content={activeReport.conclusion}
                   editable={canEdit}
-                  onChange={(html) => saveSection('conclusion', html)}
+                  remoteTyping={sectionTyping('conclusion')}
+                  typingName={activeReport.display_name}
+                  onTyping={() => handleTyping('conclusion')}
+                  onChange={(html) => commitSection('conclusion', html)}
                 />
               </Box>
             )}

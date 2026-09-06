@@ -7,6 +7,8 @@ import Header from '../components/Header';
 import { PageRefreshProvider } from '../context/PageRefreshContext';
 import FloatingCalendarButton from '../components/FloatingCalendarButton';
 import TodayConferencesPopup from '../components/TodayConferencesPopup';
+import { ConferenceSessionProvider } from '../context/ConferenceSessionContext';
+import PersistentConferenceMedia from '../components/PersistentConferenceMedia';
 
 const MainLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -22,33 +24,36 @@ const MainLayout = () => {
 
   return (
     <PageRefreshProvider>
-      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-        <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
-        <Box
-          component="main"
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: '100vh',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <Header onMobileMenuOpen={() => setMobileOpen(true)} />
-          <Container
-            maxWidth="xl"
+      <ConferenceSessionProvider>
+        <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+          <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+          <Box
+            component="main"
             sx={{
               flex: 1,
-              py: { xs: 2, md: 3 },
-              px: { xs: 2, md: 3 },
+              minWidth: 0,
+              minHeight: '100vh',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <Outlet />
-          </Container>
-          <FloatingCalendarButton />
-          <TodayConferencesPopup />
+            <Header onMobileMenuOpen={() => setMobileOpen(true)} />
+            <Container
+              maxWidth="xl"
+              sx={{
+                flex: 1,
+                py: { xs: 2, md: 3 },
+                px: { xs: 2, md: 3 },
+              }}
+            >
+              <Outlet />
+            </Container>
+            <FloatingCalendarButton />
+            <TodayConferencesPopup />
+            <PersistentConferenceMedia />
+          </Box>
         </Box>
-      </Box>
+      </ConferenceSessionProvider>
     </PageRefreshProvider>
   );
 };

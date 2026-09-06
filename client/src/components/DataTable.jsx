@@ -55,6 +55,7 @@ const DataTable = ({
   showRowNumbers = true,
   searchValue,
   highlightRowId = null,
+  loadingMore = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState(searchValue ?? '');
   const [sortField, setSortField] = useState(defaultSortField);
@@ -146,6 +147,21 @@ const DataTable = ({
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, letterSpacing: '-0.01em' }}>
                   {title}
                 </Typography>
+              )}
+              {loadingMore && (
+                <Chip
+                  icon={<CircularProgress size={12} thickness={5} />}
+                  label="Loading remaining records..."
+                  size="small"
+                  sx={{
+                    height: 24,
+                    fontWeight: 600,
+                    fontSize: '0.75rem',
+                    bgcolor: (theme) => alpha(theme.palette.info.main, 0.08),
+                    color: 'info.main',
+                    '& .MuiChip-icon': { ml: 0.75 },
+                  }}
+                />
               )}
               {total !== undefined && !loading && (
                 <Chip
@@ -524,7 +540,9 @@ const DataTable = ({
           }}
         >
           <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontWeight: 500 }}>
-            {total > 0 ? `Showing ${from}–${to} of ${total} records` : 'No records to display'}
+            {loadingMore
+              ? `Showing first ${displayRows.length} records — loading the rest…`
+              : total > 0 ? `Showing ${from}–${to} of ${total} records` : 'No records to display'}
           </Typography>
           <TablePagination
             component="div"

@@ -12,6 +12,7 @@ import {
 import { toast } from 'react-toastify';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
+import PageLoader from '../../components/PageLoader';
 
 const fieldSx = {
   '& .MuiOutlinedInput-root': {
@@ -244,10 +245,7 @@ const Notifications = () => {
       <Divider />
 
       {loading ? (
-        <Box sx={{ py: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
-          <CircularProgress size={36} thickness={4} />
-          <Typography variant="body2" color="text.secondary">Loading notifications...</Typography>
-        </Box>
+        <PageLoader message="Loading notifications..." />
       ) : filtered.length === 0 ? (
         <Box sx={{ py: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
           <Box

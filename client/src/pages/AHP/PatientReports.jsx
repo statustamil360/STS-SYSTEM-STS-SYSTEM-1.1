@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
-  Paper, Typography, Stack, CircularProgress, Box, Avatar,
+  Paper, Typography, Stack, Box, Avatar,
 } from '@mui/material';
 import { Description, PersonSearch } from '@mui/icons-material';
 import { toast } from 'react-toastify';
@@ -11,6 +11,7 @@ import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { getFieldPlaceholder, getSelectSlotProps, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
 import { SelectPlaceholderMenuItem, handleFormDialogClose } from '../../components/PremiumFormFields';
+import PageLoader from '../../components/PageLoader';
 
 const PatientReports = () => {
   const { formatDateTime } = useSystemDateTime();
@@ -64,6 +65,10 @@ const PatientReports = () => {
   };
 
   const selectedPatientName = patients.find((p) => String(p.id) === String(selectedPatient));
+
+  if (loadingPatients) {
+    return <PageLoader message="Loading patient reports..." />;
+  }
 
   return (
     <>
@@ -135,9 +140,7 @@ const PatientReports = () => {
             <Typography color="text.secondary" sx={{ fontWeight: 500 }}>Select a patient to view reports</Typography>
           </Box>
         ) : loadingReports ? (
-          <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={36} />
-          </Box>
+          <PageLoader message="Loading patient reports..." />
         ) : reports.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
             <Typography color="text.secondary" sx={{ fontWeight: 500 }}>No patient reports yet</Typography>

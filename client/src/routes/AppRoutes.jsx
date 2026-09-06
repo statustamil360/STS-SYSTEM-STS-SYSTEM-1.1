@@ -28,6 +28,7 @@ const PatientReports = lazy(() => import('../pages/AHP/PatientReports'));
 const JoinTimeReport = lazy(() => import('../pages/shared/JoinTimeReport'));
 const GuestConferenceLogin = lazy(() => import('../pages/GuestConferenceLogin'));
 const ConferenceDocumentPreview = lazy(() => import('../pages/shared/ConferenceDocumentPreview'));
+const GuestThanks = lazy(() => import('../pages/GuestThanks'));
 
 const Receptionists = lazy(() =>
   import('../pages/shared/StaffManagement').then((m) => ({ default: m.Receptionists }))
@@ -71,7 +72,7 @@ const AppRoutes = () => (
             <Route path="/receptionists" element={<Receptionists />} />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.RECEPTIONIST]} />}>
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP]} />}>
             <Route path="/preferences" element={<Preferences />} />
           </Route>
 
@@ -83,6 +84,7 @@ const AppRoutes = () => (
 
           <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP, ROLES.ADMIN, ROLES.SUPER_ADMIN, ROLES.CONFERENCE_GUEST]} />}>
             <Route path="/conferences" element={<Conferences />} />
+            <Route path="/conferences/thanks" element={<GuestThanks />} />
             <Route path="/conferences/:id/room" element={<ConferenceRoom />} />
             <Route path="/conferences/:conferenceId/documents/:fileId/preview" element={<ConferenceDocumentPreview />} />
             <Route path="/tasks" element={<Tasks />} />

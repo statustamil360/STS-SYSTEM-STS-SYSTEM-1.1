@@ -22,6 +22,7 @@ import { formatDuration } from '../utils/dateTime';
 import { sortMeetingsByCountdown } from '../hooks/useCountdown';
 import SystemClock from '../components/SystemClock';
 import { usePageRefreshRegister } from '../context/PageRefreshContext';
+import PageLoader from '../components/PageLoader';
 
 const STAT_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
@@ -422,6 +423,19 @@ const Dashboard = () => {
       : isReceptionist
         ? 'Common front-desk and scheduling workflows'
         : 'Access your clinical tools and assigned caseload';
+
+  if (loading && Object.keys(stats).length === 0) {
+    return (
+      <Box>
+        {error && (
+          <Alert severity="error" variant="outlined" sx={{ mb: 3, borderRadius: 2.5 }}>
+            {error}
+          </Alert>
+        )}
+        <PageLoader message="Loading dashboard..." />
+      </Box>
+    );
+  }
 
   return (
     <Box>

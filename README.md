@@ -44,7 +44,7 @@ Super Admin
 - Admin and staff management (create, edit, deactivate, password reset)
 - Patient registration and record management
 - Appointment booking and scheduling
-- Teleconference scheduling with GP/AHP assignment
+- Teleconference scheduling with GP/AHP assignment (video via self-hosted Jitsi — [install on Contabo](docs/JITSI_CONTABO.md))
 - Task creation and assignment via staff dropdown
 - GP medical notes and AHP patient reports
 - Notifications, profile management, and profile picture upload
@@ -72,6 +72,9 @@ STS SYSTEM/
 │   ├── middleware/         # Auth, RBAC, validation, audit, upload
 │   ├── routes/             # API route definitions
 │   └── uploads/            # Profile picture storage
+├── docs/
+│   ├── JITSI_CONTABO.md    # Jitsi Meet install on Contabo VPS
+│   └── WEBRTC_AAPANEL.md   # Optional mediasoup / coturn
 ├── package.json            # Root scripts (install, dev, seed, build)
 └── README.md
 ```

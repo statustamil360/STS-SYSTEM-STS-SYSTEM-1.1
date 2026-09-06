@@ -15,6 +15,8 @@ import api from '../../services/api';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { updateSystemSettings } from '../../redux/slices/settingsSlice';
 import { ROLES } from '../../utils/constants';
+import PageLoader from '../../components/PageLoader';
+import MediaDeviceSetup from '../../components/MediaDeviceSetup';
 
 const fieldSx = {
   '& .MuiOutlinedInput-root': {
@@ -44,6 +46,8 @@ const Preferences = () => {
   const dispatch = useDispatch();
   const role = useSelector((state) => state.auth.user?.role);
   const isAdmin = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(role);
+  const isClinical = [ROLES.GP, ROLES.AHP].includes(role);
+  const canManageProfessions = role === ROLES.RECEPTIONIST;
   const [professions, setProfessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -66,7 +70,7 @@ const Preferences = () => {
   const [savingPermission, setSavingPermission] = useState(null);
 
   const fetchProfessions = useCallback(async () => {
-    if (isAdmin) return;
+    if (isAdmin || isClinical) return;
     setLoading(true);
     setError('');
     try {
@@ -77,15 +81,15 @@ const Preferences = () => {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, [isAdmin, isClinical]);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin || isClinical) {
       setLoading(false);
       return;
     }
     fetchProfessions();
-  }, [fetchProfessions, isAdmin]);
+  }, [fetchProfessions, isAdmin, isClinical]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -172,6 +176,10 @@ const Preferences = () => {
     }
   };
 
+  if (isClinical) {
+    return <MediaDeviceSetup />;
+  }
+
   return (
     <Paper elevation={0} sx={{ overflow: 'hidden', border: '1px solid', borderColor: 'divider', borderRadius: 3, boxShadow: '0 4px 24px rgba(15, 23, 42, 0.06)' }}>
       <Box sx={{ px: { xs: 2, sm: 2.5 }, pt: 2.5, pb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
@@ -182,7 +190,9 @@ const Preferences = () => {
           <Box>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Preferences</Typography>
             <Typography variant="caption" color="text.secondary">
-              {isAdmin ? 'Control dark mode and document download access for staff roles' : 'Manage AHP profession options'}
+              {isAdmin
+                ? 'Control dark mode and document download access for staff roles'
+                : 'Manage AHP profession options'}
             </Typography>
           </Box>
         </Stack>
@@ -193,9 +203,7 @@ const Preferences = () => {
 
         {isAdmin && (
           permissionsLoading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-              <CircularProgress size={28} />
-            </Box>
+            <PageLoader message="Loading preferences..." />
           ) : (
             <Stack spacing={2.5}>
             <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
@@ -288,28 +296,30 @@ const Preferences = () => {
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>AHP Professions</Typography>
             </Stack>
 
-            <Box component="form" onSubmit={handleAdd}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 2.5 }}>
-                <TextField
-                  fullWidth size="small" required label="New profession"
-                  placeholder={getFieldPlaceholder('profession_name')}
-                  value={newProfession} onChange={(e) => setNewProfession(e.target.value)}
-                  disabled={submitting} sx={fieldSx}
-                  slotProps={{
-                    inputLabel: { shrink: true },
-                    input: { startAdornment: <InputAdornment position="start"><AddOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} /></InputAdornment> },
-                  }}
-                />
-                <Button type="submit" variant="contained" disabled={submitting || !newProfession.trim()}
-                  startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : <AddOutlined />}
-                  sx={{ flexShrink: 0, px: 3, borderRadius: '9999px', fontWeight: 600, minWidth: { sm: 160 } }}>
-                  Add Profession
-                </Button>
-              </Stack>
-            </Box>
+            {canManageProfessions && (
+              <Box component="form" onSubmit={handleAdd}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 2.5 }}>
+                  <TextField
+                    fullWidth size="small" required label="New profession"
+                    placeholder={getFieldPlaceholder('profession_name')}
+                    value={newProfession} onChange={(e) => setNewProfession(e.target.value)}
+                    disabled={submitting} sx={fieldSx}
+                    slotProps={{
+                      inputLabel: { shrink: true },
+                      input: { startAdornment: <InputAdornment position="start"><AddOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} /></InputAdornment> },
+                    }}
+                  />
+                  <Button type="submit" variant="contained" disabled={submitting || !newProfession.trim()}
+                    startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : <AddOutlined />}
+                    sx={{ flexShrink: 0, px: 3, borderRadius: '9999px', fontWeight: 600, minWidth: { sm: 160 } }}>
+                    Add Profession
+                  </Button>
+                </Stack>
+              </Box>
+            )}
 
             {loading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={32} /></Box>
+              <PageLoader message="Loading preferences..." />
             ) : professions.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>No professions yet.</Typography>
             ) : (
@@ -317,9 +327,11 @@ const Preferences = () => {
                 {professions.map((item) => (
                   <Chip
                     key={item.id} label={item.name}
-                    onDelete={() => { setPendingDelete(item); setConfirmOpen(true); }}
-                    deleteIcon={deletingId === item.id ? <CircularProgress size={14} /> : <DeleteOutlined sx={{ fontSize: 16, color: 'error.main' }} />}
-                    disabled={deletingId === item.id}
+                    {...(canManageProfessions ? {
+                      onDelete: () => { setPendingDelete(item); setConfirmOpen(true); },
+                      deleteIcon: deletingId === item.id ? <CircularProgress size={14} /> : <DeleteOutlined sx={{ fontSize: 16, color: 'error.main' }} />,
+                      disabled: deletingId === item.id,
+                    } : {})}
                     sx={{ height: 34, fontWeight: 600, bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}
                   />
                 ))}

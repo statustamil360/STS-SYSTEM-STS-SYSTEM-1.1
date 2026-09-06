@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import * as mediasoupClient from 'mediasoup-client';
+import { getMediaConstraints } from '../utils/mediaDevices';
+
+const ICE_TIMEOUT_MS = 25000;
 
 const getSocketUrl = () => {
   const api = import.meta.env.VITE_API_URL || '/api';
@@ -16,6 +19,28 @@ const socketRequest = (socket, event, payload) => new Promise((resolve, reject) 
     else reject(new Error(res?.message || `${event} failed`));
   });
 });
+
+const withTimeout = (promise, ms, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  }),
+]);
+
+const captureLocalMedia = () => {
+  const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (!getUserMedia) {
+    const host = window.location.hostname;
+    const httpsUrl = `https://${host}${window.location.port ? `:${window.location.port}` : ''}${window.location.pathname}`;
+    if (!window.isSecureContext) {
+      throw new Error(
+        `Camera and microphone need HTTPS on this PC. Open ${httpsUrl} and click Advanced → Continue (self-signed certificate).`
+      );
+    }
+    throw new Error('Camera and microphone are not available in this browser.');
+  }
+  return getUserMedia(getMediaConstraints());
+};
 
 const useMediasoupConference = ({
   conferenceId,
@@ -39,6 +64,12 @@ const useMediasoupConference = ({
   const peerStreamsRef = useRef(new Map());
   const peerMetaRef = useRef(new Map());
   const localStreamRef = useRef(null);
+  const iceServersRef = useRef(iceServers);
+  const displayNameRef = useRef(displayName);
+  const joinIcePolicyRef = useRef('relay');
+
+  iceServersRef.current = iceServers;
+  displayNameRef.current = displayName;
 
   const syncRemotePeers = useCallback(() => {
     const peers = [];
@@ -49,6 +80,7 @@ const useMediasoupConference = ({
         displayName: meta.displayName || 'Participant',
         role: meta.role || 'other',
         stream,
+        videoTrackCount: stream.getVideoTracks().filter((t) => t.readyState !== 'ended').length,
       });
     });
     setRemotePeers(peers);
@@ -69,11 +101,15 @@ const useMediasoupConference = ({
     }
 
     const existing = stream.getTracks().find((t) => t.kind === track.kind);
+    if (existing === track) {
+      syncRemotePeers();
+      return;
+    }
     if (existing) {
       stream.removeTrack(existing);
-      existing.stop();
     }
     stream.addTrack(track);
+    peerStreamsRef.current.set(peerId, new MediaStream(stream.getTracks()));
     syncRemotePeers();
   }, [syncRemotePeers]);
 
@@ -98,7 +134,12 @@ const useMediasoupConference = ({
   const consumeProducer = useCallback(async (socket, producer) => {
     const device = deviceRef.current;
     const recvTransport = recvTransportRef.current;
-    if (!device || !recvTransport) return;
+    if (!device || !recvTransport || !producer?.producerId) return;
+
+    const already = [...consumersRef.current.values()].some(
+      (c) => c.producerId === producer.producerId
+    );
+    if (already) return;
 
     const { consumer } = await socketRequest(socket, 'ms:consume', {
       conferenceId,
@@ -120,15 +161,19 @@ const useMediasoupConference = ({
       consumerId: msConsumer.id,
     });
 
-    addRemoteTrack(producer.peerId, msConsumer.track, producer);
+    const track = msConsumer.track;
+    const attach = () => addRemoteTrack(producer.peerId, track, producer);
+    attach();
+    track.addEventListener('unmute', attach);
   }, [conferenceId, addRemoteTrack]);
 
-  const createTransport = useCallback(async (socket, direction) => {
-    const { transport } = await socketRequest(socket, 'ms:createTransport', {
+  const createTransport = useCallback(async (socket, direction, servers) => {
+    const { transport, iceServers: socketIce } = await socketRequest(socket, 'ms:createTransport', {
       conferenceId,
       direction,
     });
 
+    const resolvedIce = socketIce?.length ? socketIce : servers;
     const device = deviceRef.current;
     const isSend = direction === 'send';
     const transportOptions = {
@@ -136,7 +181,8 @@ const useMediasoupConference = ({
       iceParameters: transport.iceParameters,
       iceCandidates: transport.iceCandidates,
       dtlsParameters: transport.dtlsParameters,
-      iceServers: iceServers?.length ? iceServers : undefined,
+      iceServers: resolvedIce?.length ? resolvedIce : undefined,
+      iceTransportPolicy: joinIcePolicyRef.current || 'relay',
     };
 
     const msTransport = isSend
@@ -151,6 +197,12 @@ const useMediasoupConference = ({
       })
         .then(() => callback())
         .catch(errback);
+    });
+
+    msTransport.on('connectionstatechange', (state) => {
+      if (state === 'failed') {
+        console.error(`[mediasoup] ${direction} ICE failed`);
+      }
     });
 
     if (isSend) {
@@ -168,7 +220,7 @@ const useMediasoupConference = ({
     } else {
       recvTransportRef.current = msTransport;
     }
-  }, [conferenceId, iceServers]);
+  }, [conferenceId]);
 
   const cleanup = useCallback(() => {
     producersRef.current.forEach((p) => p.close());
@@ -203,7 +255,7 @@ const useMediasoupConference = ({
   }, []);
 
   useEffect(() => {
-    if (!enabled || !conferenceId || !iceServers) return undefined;
+    if (!enabled || !conferenceId) return undefined;
 
     let cancelled = false;
 
@@ -216,7 +268,7 @@ const useMediasoupConference = ({
         const socket = io(getSocketUrl(), {
           path: '/socket.io',
           auth: { token },
-          transports: ['websocket', 'polling'],
+          transports: ['polling', 'websocket'],
         });
         socketRef.current = socket;
 
@@ -229,20 +281,42 @@ const useMediasoupConference = ({
 
         const joinRes = await socketRequest(socket, 'ms:join', {
           conferenceId,
-          displayName,
+          displayName: displayNameRef.current,
         });
+
+        const resolvedIce = joinRes.iceServers?.length
+          ? joinRes.iceServers
+          : iceServersRef.current;
+        joinIcePolicyRef.current = joinRes.iceTransportPolicy === 'all' ? 'all' : 'relay';
+        console.info(
+          '[mediasoup] ICE policy',
+          joinIcePolicyRef.current,
+          'servers',
+          Array.isArray(resolvedIce) ? resolvedIce.length : 0
+        );
 
         const device = new mediasoupClient.Device();
         await device.load({ routerRtpCapabilities: joinRes.rtpCapabilities });
         deviceRef.current = device;
 
-        await createTransport(socket, 'recv');
-        await createTransport(socket, 'send');
+        await createTransport(socket, 'recv', resolvedIce);
+        await createTransport(socket, 'send', resolvedIce);
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        socket.on('ms:newProducer', (producer) => {
+          consumeProducer(socket, producer).catch((err) => {
+            console.error('[mediasoup] consume failed', err);
+          });
         });
+
+        socket.on('ms:peerLeft', ({ peerId }) => {
+          removeRemotePeer(peerId);
+        });
+
+        for (const producer of joinRes.existingProducers || []) {
+          await consumeProducer(socket, producer);
+        }
+
+        const stream = await captureLocalMedia();
 
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -253,22 +327,31 @@ const useMediasoupConference = ({
         setLocalStream(stream);
 
         const sendTransport = sendTransportRef.current;
+        const vp8 = device.rtpCapabilities.codecs.find(
+          (codec) => codec.mimeType.toLowerCase() === 'video/vp8'
+        );
         for (const track of stream.getTracks()) {
-          const producer = await sendTransport.produce({ track });
+          const producer = await withTimeout(
+            sendTransport.produce({
+              track,
+              ...(track.kind === 'video' && vp8 ? { codec: vp8 } : {}),
+            }),
+            ICE_TIMEOUT_MS,
+            'Could not reach the video server (ICE timeout). Open UDP and TCP 40000–49999 on the VPS firewall, then restart Node.'
+          );
           producersRef.current.set(producer.id, producer);
         }
 
-        socket.on('ms:newProducer', (producer) => {
-          consumeProducer(socket, producer).catch(() => {});
-        });
-
-        socket.on('ms:peerLeft', ({ peerId }) => {
-          removeRemotePeer(peerId);
-        });
-
-        for (const producer of joinRes.existingProducers || []) {
-          await consumeProducer(socket, producer);
-        }
+        const consumeAll = async () => {
+          const { producers } = await socketRequest(socket, 'ms:listProducers', { conferenceId });
+          for (const producer of producers || []) {
+            await consumeProducer(socket, producer);
+          }
+        };
+        await consumeAll();
+        setTimeout(() => {
+          if (!cancelled) consumeAll().catch(() => {});
+        }, 2000);
 
         if (!cancelled) setStatus('connected');
       } catch (err) {
@@ -286,8 +369,7 @@ const useMediasoupConference = ({
       cancelled = true;
       cleanup();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conferenceId, enabled]);
+  }, [conferenceId, enabled, createTransport, consumeProducer, removeRemotePeer, cleanup]);
 
   const toggleMic = useCallback(() => {
     const audioTrack = localStreamRef.current?.getAudioTracks()[0];

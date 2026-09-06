@@ -14,13 +14,9 @@ import api from '../../services/api';
 import { adminUpsertSchema, adminPasswordResetSchema } from '../../utils/formSchemas';
 import { getFieldPlaceholder, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
 import { handleFormDialogClose } from '../../components/PremiumFormFields';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const AdminManagement = () => {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
@@ -40,20 +36,18 @@ const AdminManagement = () => {
     defaultValues: { password: '', confirmPassword: '' },
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/admins', { params: { search, page: page + 1, limit: rowsPerPage } });
-      setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch {
-      toast.error('Failed to load admins');
-    } finally {
-      setLoading(false);
-    }
-  }, [search, page, rowsPerPage]);
+  const fetchAdmins = useCallback(async ({ page: pageNum, limit }) => {
+    const { data } = await api.get('/admins', { params: { search, page: pageNum, limit } });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [search]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
+  } = useProgressiveTable(fetchAdmins);
+
+  useEffect(() => {
+    if (error) toast.error('Failed to load admins');
+  }, [error]);
 
   const handleCloseForm = () => {
     setOpen(false);
@@ -98,7 +92,7 @@ const AdminManagement = () => {
         setPage(0);
       }
       handleCloseForm();
-      fetchData();
+      reload();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Operation failed');
     } finally {
@@ -119,7 +113,7 @@ const AdminManagement = () => {
       toast.success('Admin deactivated successfully');
       setConfirmOpen(false);
       setPendingDelete(null);
-      fetchData();
+      reload();
     } catch {
       toast.error('Failed to deactivate admin');
     } finally {
@@ -170,6 +164,7 @@ const AdminManagement = () => {
         columns={columns}
         rows={rows}
         loading={loading}
+        loadingMore={loadingMore}
         total={total}
         page={page}
         rowsPerPage={rowsPerPage}

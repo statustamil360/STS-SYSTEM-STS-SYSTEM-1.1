@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const HTMLtoDOCX = require('html-to-docx');
 const pool = require('../config/db');
 const { listReports } = require('./clinicalReportService');
+const { formatSequenceCode } = require('../utils/sequenceCode');
 const { uploadDir } = require('../config/jwt');
 
 const stripEmpty = (html) => (html && html !== '<p></p>' ? html : '');
@@ -152,13 +152,19 @@ const buildPdfBuffer = ({
   doc.end();
 });
 
-const htmlToDocxBuffer = async (html) => HTMLtoDOCX(html, null, {
-  table: { row: { cantSplit: true } },
-  footer: true,
-  pageNumber: true,
-});
+const formatDocumentCode = (id) => formatSequenceCode('DOC', Number(id));
 
-const generateParticipantDocuments = async (conferenceId) => {
+const hasGeneratedDocuments = async (conferenceId) => {
+  const [rows] = await pool.execute(
+    'SELECT id FROM conference_generated_documents WHERE conference_id = ? LIMIT 1',
+    [conferenceId]
+  );
+  return rows.length > 0;
+};
+
+const generateParticipantDocuments = async (conferenceId, { skipIfExists = false } = {}) => {
+  if (skipIfExists && await hasGeneratedDocuments(conferenceId)) return [];
+
   const [confRows] = await pool.execute(
     `SELECT c.conference_code,
             DATE_FORMAT(c.scheduled_date, '%d %b %Y') AS meeting_date,
@@ -179,57 +185,53 @@ const generateParticipantDocuments = async (conferenceId) => {
 
   const reports = await listReports(conferenceId);
   const uploadBase = ensureUploadDir();
-  const saved = [];
 
-  for (const participant of reports) {
-    const html = buildReportHtml({
-      hospitalName,
-      patientName: conf.patient_name,
-      patientCode: conf.patient_code,
-      conferenceCode: conf.conference_code,
-      meetingDate: conf.meeting_date,
-      reports,
-    });
+  const [ownerRows] = await pool.execute(
+    `SELECT gp.user_id
+     FROM conferences c
+     JOIN gps gp ON gp.id = c.gp_id
+     WHERE c.id = ?`,
+    [conferenceId]
+  );
+  const ownerUserId = reports[0]?.user_id || ownerRows[0]?.user_id;
+  if (!ownerUserId) throw new Error('No participant available for the conference document');
 
-    const safeName = `${conf.conference_code}-${participant.display_name.replace(/[^a-z0-9]+/gi, '-')}`;
-    const pdfBuffer = await buildPdfBuffer({
-      hospitalName,
-      patientName: conf.patient_name,
-      patientCode: conf.patient_code,
-      conferenceCode: conf.conference_code,
-      meetingDate: conf.meeting_date,
-      reports,
-    });
-    const docxBuffer = await htmlToDocxBuffer(html);
+  const pdfBuffer = await buildPdfBuffer({
+    hospitalName,
+    patientName: conf.patient_name,
+    patientCode: conf.patient_code,
+    conferenceCode: conf.conference_code,
+    meetingDate: conf.meeting_date,
+    reports,
+  });
 
-    for (const [ext, buffer] of [['pdf', pdfBuffer], ['docx', docxBuffer]]) {
-      const storedName = `${safeName}-${Date.now()}.${ext}`;
-      const filePath = path.join(uploadBase, storedName);
-      fs.writeFileSync(filePath, buffer);
-      const relativePath = path.join(uploadDir, 'conference-reports', storedName);
-      const originalName = `${conf.conference_code} - ${participant.display_name}.${ext}`;
+  const storedName = `${conf.conference_code}-${Date.now()}.pdf`;
+  const filePath = path.join(uploadBase, storedName);
+  fs.writeFileSync(filePath, pdfBuffer);
+  const relativePath = path.join(uploadDir, 'conference-reports', storedName);
 
-      await pool.execute(
-        `INSERT INTO conference_generated_documents
-         (conference_id, participant_user_id, participant_name, file_type, original_name, stored_name, file_path, file_size)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          conferenceId,
-          participant.user_id,
-          participant.display_name,
-          ext,
-          originalName,
-          storedName,
-          relativePath,
-          buffer.length,
-        ]
-      );
+  const [insertResult] = await pool.execute(
+    `INSERT INTO conference_generated_documents
+     (conference_id, participant_user_id, participant_name, file_type, original_name, stored_name, file_path, file_size)
+     VALUES (?, ?, ?, 'pdf', ?, ?, ?, ?)`,
+    [
+      conferenceId,
+      ownerUserId,
+      'Clinical Report',
+      'document.pdf',
+      storedName,
+      relativePath,
+      pdfBuffer.length,
+    ]
+  );
 
-      saved.push({ participant: participant.display_name, type: ext, path: relativePath });
-    }
-  }
+  const documentCode = formatDocumentCode(insertResult.insertId);
+  await pool.execute(
+    'UPDATE conference_generated_documents SET original_name = ? WHERE id = ?',
+    [`${documentCode}.pdf`, insertResult.insertId]
+  );
 
-  return saved;
+  return [{ type: 'pdf', documentCode, path: relativePath }];
 };
 
-module.exports = { buildReportHtml, generateParticipantDocuments };
+module.exports = { buildReportHtml, generateParticipantDocuments, hasGeneratedDocuments, formatDocumentCode };

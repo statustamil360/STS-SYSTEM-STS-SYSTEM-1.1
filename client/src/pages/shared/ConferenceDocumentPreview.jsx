@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress, Typography, Button, Stack } from '@mui/material';
 import { DownloadOutlined, ArrowBackOutlined } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import useDocumentDownloadAccess from '../../hooks/useDocumentDownloadAccess';
 
 const ConferenceDocumentPreview = () => {
   const { conferenceId, fileId } = useParams();
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const canDownloadDocuments = useDocumentDownloadAccess();
   const [blobUrl, setBlobUrl] = useState('');

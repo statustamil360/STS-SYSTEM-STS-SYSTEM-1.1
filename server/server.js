@@ -33,6 +33,13 @@ server.on('error', (err) => {
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`AMC Teleconference Server running on port ${PORT} (${NODE_ENV})`);
   console.log(`[startup] Working directory: ${process.cwd()}`);
+  const lanIp = String(process.env.LAN_IP || '').trim();
+  if (lanIp) {
+    console.log(`[startup] LAN access: https://${lanIp}:5173  (Vite HTTPS)  |  http://${lanIp}:${PORT}/api/health`);
+  }
+  if (process.env.CLIENT_URL || process.env.PUBLIC_URL) {
+    console.log(`[startup] Public origin: ${process.env.PUBLIC_URL || process.env.CLIENT_URL}`);
+  }
   try {
     await initMediasoup();
   } catch (err) {

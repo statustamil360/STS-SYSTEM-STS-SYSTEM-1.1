@@ -42,8 +42,12 @@ const PAGE_META = {
     subtitle: 'Manage your account settings and personal information',
   },
   '/preferences': {
-    title: 'Preferences',
-    subtitle: 'Manage AHP profession options for allied health staff registration',
+    title: (role) => (CLINICAL_ROLES.includes(role) ? 'Audio & Video' : 'Preferences'),
+    subtitle: (role) => (CLINICAL_ROLES.includes(role)
+      ? 'Configure devices for conferences and meeting audio'
+      : [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(role)
+        ? 'Control dark mode and document download access for staff roles'
+        : 'Manage AHP profession options for allied health staff registration'),
   },
   '/settings': {
     title: 'Settings',

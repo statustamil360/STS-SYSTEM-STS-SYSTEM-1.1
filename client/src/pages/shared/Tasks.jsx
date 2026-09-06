@@ -24,6 +24,7 @@ import useSystemDateTime from '../../hooks/useSystemDateTime';
 import useRolePermissions from '../../hooks/useRolePermissions';
 import { TASK_PRIORITY, TASK_STATUS, ROLE_LABELS, ROLES } from '../../utils/constants';
 import { buildTaskPayload } from '../../utils/crudHelpers';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
@@ -164,11 +165,6 @@ const Tasks = () => {
   const { user } = useSelector((state) => state.auth);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const canManage = !isClinical;
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
@@ -204,25 +200,26 @@ const Tasks = () => {
     [assignableUsers, selectedRole]
   );
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/tasks', {
-        params: {
-          search: search || undefined,
-          status: statusFilter || undefined,
-          priority: priorityFilter || undefined,
-          page: page + 1,
-          limit: rowsPerPage,
-        },
-      });
-      setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch { toast.error('Failed to load tasks'); }
-    finally { setLoading(false); }
-  }, [search, statusFilter, priorityFilter, page, rowsPerPage]);
+  const fetchTasks = useCallback(async ({ page: pageNum, limit }) => {
+    const { data } = await api.get('/tasks', {
+      params: {
+        search: search || undefined,
+        status: statusFilter || undefined,
+        priority: priorityFilter || undefined,
+        page: pageNum,
+        limit,
+      },
+    });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [search, statusFilter, priorityFilter]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
+  } = useProgressiveTable(fetchTasks);
+
+  useEffect(() => {
+    if (error) toast.error('Failed to load tasks');
+  }, [error]);
 
   useEffect(() => {
     if (canManage) {
@@ -274,7 +271,7 @@ const Tasks = () => {
         setPage(0);
       }
       handleCloseForm();
-      fetchData();
+      reload();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
   };
@@ -290,7 +287,7 @@ const Tasks = () => {
       await api.delete(`/tasks/${pendingDelete.id}`);
       toast.success('Task deleted successfully');
       if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
-      fetchData();
+      reload();
     } catch {
       toast.error('Failed to delete task');
     } finally {
@@ -337,6 +334,7 @@ const Tasks = () => {
         columns={columns}
         rows={rows}
         loading={loading}
+        loadingMore={loadingMore}
         total={total}
         page={page}
         rowsPerPage={rowsPerPage}

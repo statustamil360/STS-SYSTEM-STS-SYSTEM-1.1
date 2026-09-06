@@ -29,6 +29,7 @@ import { formatDateInput, formatTimeInput } from '../../utils/crudHelpers';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { STATUS_COLORS } from '../../utils/constants';
 import { openAppointmentFilePreview } from '../../utils/filePreview';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'cancelled'];
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
@@ -176,15 +177,10 @@ const Appointments = () => {
   const navigate = useNavigate();
   const highlightHandledRef = useRef(false);
   const { canEdit, canDelete } = useRolePermissions();
-  const [rows, setRows] = useState([]);
   const [patients, setPatients] = useState([]);
   const [gps, setGps] = useState([]);
   const [ahps, setAhps] = useState([]);
   const [professions, setProfessions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
@@ -205,26 +201,22 @@ const Appointments = () => {
     defaultValues: defaultFormValues,
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/appointments', {
-        params: {
-          scope: 'records',
-          search: search || undefined,
-          status: statusFilter || undefined,
-          page: page + 1,
-          limit: rowsPerPage,
-        },
-      });
-      setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch {
-      toast.error('Failed to load appointments');
-    } finally {
-      setLoading(false);
-    }
-  }, [search, statusFilter, page, rowsPerPage]);
+  const fetchAppointments = useCallback(async ({ page: pageNum, limit }) => {
+    const { data } = await api.get('/appointments', {
+      params: {
+        scope: 'records',
+        search: search || undefined,
+        status: statusFilter || undefined,
+        page: pageNum,
+        limit,
+      },
+    });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [search, statusFilter]);
+
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
+  } = useProgressiveTable(fetchAppointments);
 
   const loadFormOptions = useCallback(async () => {
     try {
@@ -244,11 +236,14 @@ const Appointments = () => {
   }, []);
 
   useEffect(() => {
-    fetchData();
     loadFormOptions();
-  }, [fetchData, loadFormOptions]);
+  }, [loadFormOptions]);
 
-  usePageRefreshRegister(fetchData);
+  useEffect(() => {
+    if (error) toast.error('Failed to load appointments');
+  }, [error]);
+
+  usePageRefreshRegister(reload);
 
   useEffect(() => {
     const targetId = location.state?.highlightAppointmentId;
@@ -275,7 +270,7 @@ const Appointments = () => {
 
     resolveHighlight();
     return undefined;
-  }, [location.state?.highlightAppointmentId, location.pathname, navigate]);
+  }, [location.state?.highlightAppointmentId, location.pathname, navigate, setPage]);
 
   const gpOptions = useMemo(() => gps.map((g) => ({
     value: String(g.id),
@@ -416,7 +411,7 @@ const Appointments = () => {
       toast.success(editRow ? 'Appointment updated successfully' : 'Conference appointment booked successfully');
       handleCloseForm();
       if (!editRow) setPage(0);
-      fetchData();
+      reload();
     } catch (err) {
       const apiMessage = err.response?.data?.message;
       const validationErrors = err.response?.data?.errors;
@@ -453,7 +448,7 @@ const Appointments = () => {
       await api.delete(`/appointments/${pendingDelete.id}`);
       toast.success('Appointment deleted successfully');
       if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
-      fetchData();
+      reload();
     } catch {
       toast.error('Failed to delete appointment');
     } finally {
@@ -514,6 +509,7 @@ const Appointments = () => {
         columns={columns}
         rows={rows}
         loading={loading}
+        loadingMore={loadingMore}
         total={total}
         page={page}
         rowsPerPage={rowsPerPage}

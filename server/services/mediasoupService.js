@@ -43,18 +43,15 @@ const initMediasoup = async () => {
     process.exit(1);
   });
 
-  console.log(`[mediasoup] Worker started (ports ${webrtcConfig.minPort}-${webrtcConfig.maxPort})`);
+  const announced = webrtcConfig.lanIp || webrtcConfig.publicIp || webrtcConfig.listenIp;
+  console.log(`[mediasoup] Worker started (UDP/TCP ${webrtcConfig.minPort}-${webrtcConfig.maxPort}, LAN ${webrtcConfig.lanIp || '-'}, public ${webrtcConfig.publicIp || '-'}, announced ${announced})`);
+  if (!webrtcConfig.announcedAddress) {
+    console.warn('[mediasoup] WEBRTC_ANNOUNCED_IP is missing or 0.0.0.0 — browsers cannot reach this server over the internet');
+  }
   return worker;
 };
 
-const getListenIps = () => [
-  {
-    ip: webrtcConfig.listenIp,
-    announcedIp: webrtcConfig.announcedIp !== webrtcConfig.listenIp
-      ? webrtcConfig.announcedIp
-      : undefined,
-  },
-];
+const getListenInfos = () => webrtcConfig.listenInfos;
 
 const getOrCreateRoom = async (conferenceId) => {
   const key = String(conferenceId);
@@ -113,7 +110,7 @@ const createWebRtcTransport = async (conferenceId, peerId, direction) => {
   if (!room || !peer) throw new Error('Peer not found');
 
   const transport = await room.router.createWebRtcTransport({
-    listenIps: getListenIps(),
+    listenInfos: getListenInfos(),
     enableUdp: true,
     enableTcp: true,
     preferUdp: true,
@@ -131,6 +128,11 @@ const createWebRtcTransport = async (conferenceId, peerId, direction) => {
   transport.on('dtlsstatechange', (state) => {
     if (state === 'closed') transport.close();
   });
+
+  const iceSummary = (transport.iceCandidates || [])
+    .map((c) => `${c.address || c.ip}:${c.port}/${c.protocol}`)
+    .join(', ');
+  console.log(`[mediasoup] ${direction} ICE candidates: ${iceSummary || '(none)'}`);
 
   return {
     id: transport.id,
@@ -203,6 +205,13 @@ const resumeConsumer = async (conferenceId, peerId, consumerId) => {
   const consumer = peer?.consumers.get(consumerId);
   if (!consumer) throw new Error('Consumer not found');
   await consumer.resume();
+  if (consumer.kind === 'video' && typeof consumer.requestKeyFrame === 'function') {
+    try {
+      await consumer.requestKeyFrame();
+    } catch {
+      /* older mediasoup */
+    }
+  }
 };
 
 const listExistingProducers = (conferenceId, excludePeerId) => {

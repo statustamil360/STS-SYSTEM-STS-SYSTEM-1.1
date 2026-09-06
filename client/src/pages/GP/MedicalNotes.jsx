@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
-  Paper, Typography, Stack, CircularProgress, Box, Avatar,
+  Paper, Typography, Stack, Box, Avatar,
 } from '@mui/material';
 import { NoteAlt, PersonSearch } from '@mui/icons-material';
 import { toast } from 'react-toastify';
@@ -11,6 +11,7 @@ import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { getFieldPlaceholder, getSelectSlotProps, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
 import { SelectPlaceholderMenuItem, handleFormDialogClose } from '../../components/PremiumFormFields';
+import PageLoader from '../../components/PageLoader';
 
 const MedicalNotes = () => {
   const { formatDateTime } = useSystemDateTime();
@@ -64,6 +65,10 @@ const MedicalNotes = () => {
   };
 
   const selectedPatientName = patients.find((p) => String(p.id) === String(selectedPatient));
+
+  if (loadingPatients) {
+    return <PageLoader message="Loading medical notes..." />;
+  }
 
   return (
     <>
@@ -135,9 +140,7 @@ const MedicalNotes = () => {
             <Typography color="text.secondary" sx={{ fontWeight: 500 }}>Select a patient to view notes</Typography>
           </Box>
         ) : loadingNotes ? (
-          <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={36} />
-          </Box>
+          <PageLoader message="Loading medical notes..." />
         ) : notes.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
             <Typography color="text.secondary" sx={{ fontWeight: 500 }}>No medical notes yet</Typography>

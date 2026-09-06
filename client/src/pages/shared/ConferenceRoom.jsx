@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
   Box, Button, Stack, Typography, IconButton, Paper, CircularProgress, Dialog,
@@ -13,71 +13,113 @@ import { useSelector } from 'react-redux';
 import api from '../../services/api';
 import { ROLES } from '../../utils/constants';
 import ConferenceReportPanel from '../../components/ConferenceReportPanel';
-import WebRTCVideoRoom from '../../components/WebRTCVideoRoom';
-import useMediasoupConference from '../../hooks/useMediasoupConference';
+import { useConferenceSession } from '../../context/ConferenceSessionContext';
+
+const LiveDot = () => (
+  <Box
+    sx={{
+      width: 8,
+      height: 8,
+      borderRadius: '50%',
+      bgcolor: 'error.main',
+      boxShadow: '0 0 0 0 rgba(239, 68, 68, 0.65)',
+      animation: 'stsLivePulse 1.6s ease-out infinite',
+      '@keyframes stsLivePulse': {
+        '0%': { boxShadow: '0 0 0 0 rgba(239, 68, 68, 0.65)' },
+        '70%': { boxShadow: '0 0 0 8px rgba(239, 68, 68, 0)' },
+        '100%': { boxShadow: '0 0 0 0 rgba(239, 68, 68, 0)' },
+      },
+    }}
+  />
+);
 
 const ConferenceRoom = () => {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
-  const leaveSentRef = useRef(false);
-  const [loading, setLoading] = useState(true);
-  const [roomInfo, setRoomInfo] = useState(location.state || null);
-  const [isAssignedGp, setIsAssignedGp] = useState(user?.role === ROLES.GP);
+  const {
+    session,
+    startSession,
+    updateRoomInfo,
+    attachRoomView,
+    detachRoomView,
+    registerVideoSlot,
+    leaveSession,
+    endSession,
+    isAssignedGp,
+    setIsAssignedGp,
+    jitsiLive,
+    jitsiParticipants,
+    mediaState,
+    toggleMic,
+    toggleCam,
+  } = useConferenceSession();
+
+  const [loading, setLoading] = useState(!session || String(session.conferenceId) !== String(id));
   const [editRequestOpen, setEditRequestOpen] = useState(false);
   const [editReason, setEditReason] = useState('');
   const [submittingRequest, setSubmittingRequest] = useState(false);
+  const videoSlotRef = useRef(null);
 
   const isGp = user?.role === ROLES.GP;
   const isClinical = [ROLES.GP, ROLES.AHP, 'conference_guest'].includes(user?.role);
+  const roomInfo = session?.conferenceId === String(id) || String(session?.conferenceId) === String(id)
+    ? session?.roomInfo
+    : (location.state || null);
+  const isJitsi = roomInfo?.provider === 'jitsi';
+  const patientName = session?.patientName || roomInfo?.patientName || roomInfo?.conference?.patient_name || '';
+  const { videoStatus, videoError, micOn, camOn, remotePeerCount = 0 } = mediaState;
 
-  const {
-    status: videoStatus,
-    error: videoError,
-    localStream,
-    remotePeers,
-    micOn,
-    camOn,
-    toggleMic,
-    toggleCam,
-    leave: leaveVideo,
-  } = useMediasoupConference({
-    conferenceId: id,
-    iceServers: roomInfo?.iceServers,
-    displayName: roomInfo?.displayName || user?.full_name || user?.username,
-    enabled: Boolean(roomInfo?.iceServers && roomInfo?.provider === 'webrtc'),
-  });
-
-  const recordLeave = async () => {
-    if (leaveSentRef.current || !isClinical) return;
-    leaveSentRef.current = true;
-    try {
-      await api.post(`/conferences/${id}/leave`);
-    } catch {
-      /* best-effort */
-    }
-  };
+  const bindVideoSlot = useCallback((el) => {
+    videoSlotRef.current = el;
+    registerVideoSlot(el);
+  }, [registerVideoSlot]);
 
   useEffect(() => {
     api.get(`/conferences/${id}`)
       .then(({ data }) => {
         if (data.data?.gp_id) setIsAssignedGp(user?.role === ROLES.GP);
+        if (data.data?.patient_name) {
+          updateRoomInfo({
+            patientName: data.data.patient_name,
+            roomInfo: {
+              patientName: data.data.patient_name,
+              conference: {
+                ...(roomInfo?.conference || {}),
+                patient_name: data.data.patient_name,
+              },
+            },
+          });
+        }
       })
       .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user?.role]);
 
   useEffect(() => {
     let mounted = true;
+    const sameSession = session && String(session.conferenceId) === String(id);
+
+    if (sameSession) {
+      attachRoomView();
+      setLoading(false);
+      return () => {
+        if (mounted) detachRoomView();
+      };
+    }
 
     const initRoom = async () => {
       try {
-        let info = roomInfo;
-        if (!info?.iceServers || info?.provider !== 'webrtc') {
-          const { data } = await api.post(`/conferences/${id}/join`);
-          info = data.data;
-          if (mounted) setRoomInfo(info);
-        }
+        const { data } = await api.post(`/conferences/${id}/join`);
+        if (!mounted) return;
+        const nextRoom = data.data;
+        startSession({
+          conferenceId: id,
+          roomInfo: nextRoom,
+          patientName: nextRoom?.patientName || nextRoom?.conference?.patient_name || location.state?.patientName || '',
+          isAssignedGp: user?.role === ROLES.GP,
+        });
       } catch (err) {
         toast.error(err.response?.data?.message || 'Failed to join meeting room');
         navigate('/conferences');
@@ -90,29 +132,10 @@ const ConferenceRoom = () => {
 
     return () => {
       mounted = false;
-      recordLeave();
-      leaveVideo();
+      detachRoomView();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  const handleEndMeeting = async () => {
-    try {
-      leaveVideo();
-      await recordLeave();
-      await api.post(`/conferences/${id}/end`);
-      toast.success('Meeting ended — documents are being generated');
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to end meeting');
-    }
-    navigate('/conferences?tab=documents');
-  };
-
-  const handleLeave = async () => {
-    leaveVideo();
-    await recordLeave();
-    navigate('/conferences');
-  };
 
   const handleEditRequest = async () => {
     if (!editReason.trim()) return;
@@ -129,33 +152,57 @@ const ConferenceRoom = () => {
     }
   };
 
-  const videoConnecting = loading || videoStatus === 'connecting' || (videoStatus === 'idle' && roomInfo?.iceServers);
-  const videoControlsDisabled = videoConnecting || videoStatus === 'error';
+  const videoConnecting = !isJitsi && (loading || videoStatus === 'connecting' || (videoStatus === 'idle' && roomInfo?.iceServers));
+  const videoControlsDisabled = isJitsi ? loading : (videoConnecting || videoStatus === 'error');
+  const showLive = isJitsi ? jitsiLive : videoStatus === 'connected';
+  const participantCount = isJitsi ? jitsiParticipants : (1 + remotePeerCount);
+  const participantLabel = `${participantCount} participant${participantCount === 1 ? '' : 's'}`;
+
+  const MeetingActionButton = ({ size = 'medium' }) => (
+    isGp ? (
+      <Button
+        variant="contained"
+        color="error"
+        size={size}
+        startIcon={<CallEndOutlined />}
+        onClick={endSession}
+        disabled={videoControlsDisabled}
+      >
+        End Meeting
+      </Button>
+    ) : (
+      <Button
+        variant="contained"
+        color="error"
+        size={size}
+        startIcon={<ExitToAppOutlined />}
+        onClick={leaveSession}
+        disabled={videoControlsDisabled}
+      >
+        Leave Meeting
+      </Button>
+    )
+  );
 
   const videoControls = (
     <Stack direction="row" justifyContent="center" spacing={1.5} sx={{ py: 1 }}>
-      <IconButton
-        onClick={toggleMic}
-        disabled={videoControlsDisabled}
-        sx={{ bgcolor: micOn ? 'background.paper' : 'error.main', color: micOn ? 'text.primary' : 'error.contrastText' }}
-      >
-        {micOn ? <MicOutlined /> : <MicOffOutlined />}
-      </IconButton>
-      <IconButton
-        onClick={toggleCam}
-        disabled={videoControlsDisabled}
-        sx={{ bgcolor: camOn ? 'background.paper' : 'error.main', color: camOn ? 'text.primary' : 'error.contrastText' }}
-      >
-        {camOn ? <VideocamOutlined /> : <VideocamOffOutlined />}
-      </IconButton>
-      {isGp ? (
-        <Button variant="contained" color="error" startIcon={<CallEndOutlined />} onClick={handleEndMeeting} disabled={videoControlsDisabled}>
-          End Meeting
-        </Button>
-      ) : (
-        <Button variant="outlined" color="inherit" startIcon={<ExitToAppOutlined />} onClick={handleLeave} disabled={videoControlsDisabled}>
-          Leave
-        </Button>
+      {!isJitsi && (
+        <>
+          <IconButton
+            onClick={toggleMic}
+            disabled={videoControlsDisabled}
+            sx={{ bgcolor: micOn ? 'background.paper' : 'error.main', color: micOn ? 'text.primary' : 'error.contrastText' }}
+          >
+            {micOn ? <MicOutlined /> : <MicOffOutlined />}
+          </IconButton>
+          <IconButton
+            onClick={toggleCam}
+            disabled={videoControlsDisabled}
+            sx={{ bgcolor: camOn ? 'background.paper' : 'error.main', color: camOn ? 'text.primary' : 'error.contrastText' }}
+          >
+            {camOn ? <VideocamOutlined /> : <VideocamOffOutlined />}
+          </IconButton>
+        </>
       )}
     </Stack>
   );
@@ -170,21 +217,36 @@ const ConferenceRoom = () => {
   }
 
   return (
-    <Box sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <Box sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
-        <IconButton onClick={isGp ? undefined : handleLeave} disabled={isGp}><ArrowBackOutlined /></IconButton>
-        <Typography variant="h6" fontWeight={700}>Clinical Video Conference</Typography>
-        {videoStatus === 'connected' && (
-          <Typography variant="caption" color="success.main" fontWeight={700}>
-            Live · {1 + remotePeers.length} participant{remotePeers.length === 0 ? '' : 's'}
+        <IconButton onClick={isGp ? undefined : leaveSession} disabled={isGp}><ArrowBackOutlined /></IconButton>
+        <Typography variant="h6" fontWeight={700}>
+          {patientName || 'Clinical Video Conference'}
+        </Typography>
+        {showLive && (
+          <Typography variant="body2" color="text.secondary" fontWeight={600}>
+            {participantLabel}
           </Typography>
         )}
+        {showLive && (
+          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ ml: 0.5 }}>
+            <LiveDot />
+            <Typography variant="caption" color="error.main" fontWeight={700}>
+              Live
+            </Typography>
+          </Stack>
+        )}
+        <Box sx={{ flex: 1 }} />
+        <MeetingActionButton />
       </Stack>
 
       <Box sx={{ flex: 1, display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.2fr 1fr' }, gap: 2, minHeight: 0 }}>
-        <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', border: '1px solid', borderColor: 'divider', bgcolor: '#0f172a', display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ flex: 1, position: 'relative', minHeight: 280 }}>
-            {videoConnecting && (
+        <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', border: '1px solid', borderColor: 'divider', bgcolor: '#0f172a', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Box
+            ref={bindVideoSlot}
+            sx={{ flex: 1, position: 'relative', minHeight: { xs: 280, md: 0 } }}
+          >
+            {videoConnecting && isJitsi === false && (
               <Box sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', zIndex: 1 }}>
                 <CircularProgress color="inherit" sx={{ color: 'grey.400' }} />
                 <Typography sx={{ position: 'absolute', top: '58%', color: 'grey.400' }} variant="body2">
@@ -197,14 +259,8 @@ const ConferenceRoom = () => {
                 <Alert severity="error">{videoError}</Alert>
               </Box>
             )}
-            <WebRTCVideoRoom
-              localStream={localStream}
-              remotePeers={remotePeers}
-              displayName={roomInfo?.displayName}
-              userRole={user?.role}
-            />
           </Box>
-          {videoControls}
+          {!isJitsi && videoControls}
         </Paper>
 
         {isClinical && (

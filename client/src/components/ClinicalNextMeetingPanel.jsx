@@ -49,6 +49,7 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
         roomId: data.roomId,
         iceServers: data.iceServers,
         displayName: data.displayName,
+        patientName: data.patientName || meeting.patient_name || '',
       },
     });
   };

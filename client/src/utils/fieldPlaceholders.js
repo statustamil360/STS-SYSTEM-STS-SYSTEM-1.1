@@ -16,7 +16,7 @@ const PLACEHOLDERS = {
   hospital: 'e.g. Colombo General Hospital',
   insurance: 'e.g. National Insurance Co.',
   medical_history: 'e.g. Diabetes, hypertension...',
-  meeting_link: 'e.g. https://meet.example.com/room-id',
+  meeting_link: 'e.g. https://meet.asterixmc.com/con-0014',
   notes: 'e.g. Follow-up in 2 weeks',
   title: 'e.g. Weekly team review',
   description: 'e.g. Prepare patient summary before call',

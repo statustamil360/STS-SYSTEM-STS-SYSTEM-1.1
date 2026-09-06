@@ -18,6 +18,7 @@ import { DEFAULT_TIMEZONE, TIMEZONE_OPTIONS, getTimezoneLabel } from '../../util
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { formatClock } from '../../utils/dateTime';
 import { ROLES } from '../../utils/constants';
+import PageLoader from '../../components/PageLoader';
 import api from '../../services/api';
 
 const DEFAULT_EMAIL = {
@@ -194,9 +195,7 @@ const Settings = () => {
         subtitle="Configure global hospital preferences, localization, and appearance"
       >
         {fetching ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-            <CircularProgress size={36} thickness={4} />
-          </Box>
+          <PageLoader message="Loading settings..." />
         ) : (
           <PremiumSection
             icon={TuneOutlined}
@@ -338,9 +337,7 @@ const Settings = () => {
       )}
 
       {isSuperAdmin && fetching && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-          <CircularProgress size={36} thickness={4} />
-        </Box>
+        <PageLoader message="Loading settings..." />
       )}
 
       {isSuperAdmin && !fetching && (

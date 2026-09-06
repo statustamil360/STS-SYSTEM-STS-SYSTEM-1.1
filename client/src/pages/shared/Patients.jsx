@@ -29,6 +29,7 @@ import {
   buildPatientPayload,
   PATIENT_FORM_DEFAULTS,
 } from '../../utils/crudHelpers';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const calculateAge = (dob) => {
   if (!dob) return '';
@@ -397,12 +398,7 @@ const Patients = () => {
   const { canEdit, canDelete } = useRolePermissions();
   const canManage = [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [search, setSearch] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
   const [medicalIdFilter, setMedicalIdFilter] = useState('');
@@ -427,37 +423,34 @@ const Patients = () => {
   const dobValue = watch('dob');
   const currentAge = calculateAge(dobValue);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchPatients = useCallback(async ({ page: pageNum, limit }) => {
     setListError('');
-    try {
-      const { data } = await api.get('/patients', {
-        params: {
-          search: search || undefined,
-          gender: genderFilter || undefined,
-          has_medical_id: medicalIdFilter || undefined,
-          has_mobile: mobileFilter || undefined,
-          has_insurance: insuranceFilter || undefined,
-          sortBy,
-          sortOrder,
-          page: page + 1,
-          limit: rowsPerPage,
-        },
-      });
-      setRows(data.data ?? []);
-      setTotal(data.pagination?.total ?? 0);
-    } catch (err) {
-      setRows([]);
-      setTotal(0);
-      const message = err.response?.data?.message || 'Failed to load patients';
-      setListError(message);
-      toast.error(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, genderFilter, medicalIdFilter, mobileFilter, insuranceFilter, sortBy, sortOrder, page, rowsPerPage]);
+    const { data } = await api.get('/patients', {
+      params: {
+        search: search || undefined,
+        gender: genderFilter || undefined,
+        has_medical_id: medicalIdFilter || undefined,
+        has_mobile: mobileFilter || undefined,
+        has_insurance: insuranceFilter || undefined,
+        sortBy,
+        sortOrder,
+        page: pageNum,
+        limit,
+      },
+    });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [search, genderFilter, medicalIdFilter, mobileFilter, insuranceFilter, sortBy, sortOrder]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
+  } = useProgressiveTable(fetchPatients);
+
+  useEffect(() => {
+    if (!error) return;
+    const message = error.response?.data?.message || 'Failed to load patients';
+    setListError(message);
+    toast.error(message);
+  }, [error]);
 
   useEffect(() => {
     if (!canManage) return undefined;
@@ -530,7 +523,7 @@ const Patients = () => {
         setPage(0);
       }
       handleCloseForm();
-      fetchData();
+      reload();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
   };
@@ -561,7 +554,7 @@ const Patients = () => {
       await api.delete(`/patients/${pendingDelete.id}`);
       toast.success('Patient deleted successfully');
       if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
-      fetchData();
+      reload();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to delete patient');
     } finally {
@@ -624,6 +617,7 @@ const Patients = () => {
         columns={columns}
         rows={rows}
         loading={loading}
+        loadingMore={loadingMore}
         total={total}
         page={page}
         rowsPerPage={rowsPerPage}

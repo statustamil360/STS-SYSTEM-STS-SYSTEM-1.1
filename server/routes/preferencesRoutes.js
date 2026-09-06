@@ -8,7 +8,7 @@ const router = express.Router();
 router.use(authenticate);
 
 const manageRoles = authorize('admin', 'receptionist');
-const readRoles = authorize('admin', 'receptionist');
+const readRoles = authorize('admin', 'receptionist', 'gp', 'ahp');
 
 router.get('/ahp-professions', readRoles, preferencesController.getAhpProfessions);
 router.post('/ahp-professions', manageRoles, [

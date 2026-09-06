@@ -84,6 +84,7 @@ const ConferenceMeetingCard = ({
         roomId: data.roomId,
         iceServers: data.iceServers,
         displayName: data.displayName,
+        patientName: data.patientName || conference.patient_name || '',
       },
     });
   };

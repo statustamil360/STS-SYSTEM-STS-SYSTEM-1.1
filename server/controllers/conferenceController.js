@@ -8,7 +8,8 @@ const { buildExport } = require('../services/exportService');
 const { createAuditLog } = require('../middleware/auditLog');
 const { assertClinicalDocumentDownload } = require('../middleware/receptionistPermission');
 const { ensureReportRows, lockReportsAfterMeeting } = require('../services/clinicalReportService');
-const { generateParticipantDocuments } = require('../services/clinicalDocumentService');
+const { generateParticipantDocuments, formatDocumentCode } = require('../services/clinicalDocumentService');
+const { emitConferenceEnded } = require('../services/socketService');
 const {
   startSession, endSession, endAllSessions, getConferenceAttendance, getJoinTimeReport,
 } = require('../services/conferenceAttendanceService');
@@ -85,7 +86,7 @@ const applyRoleFilter = async (req, query, params) => {
 
 const getConferenceById = async (id) => {
   const [rows] = await pool.execute(`${conferenceSelectBase} WHERE c.id = ?`, [id]);
-  return rows[0] || null;
+  return videoService.withMeetingLink(rows[0] || null);
 };
 
 const getStaffContext = async (user) => {
@@ -125,6 +126,31 @@ const isAssignedParticipant = async (conference, user) => {
   return ['receptionist', 'admin', 'super_admin'].includes(user.role);
 };
 
+const backfillMissingDocuments = async (req) => {
+  let where = "WHERE c.status = 'completed'";
+  const params = [];
+  where = await applyRoleFilter(req, where, params);
+
+  const [missing] = await pool.execute(
+    `SELECT c.id
+     FROM conferences c
+     LEFT JOIN conference_generated_documents d ON d.conference_id = c.id
+     ${where}
+       AND d.id IS NULL
+     ORDER BY c.scheduled_date DESC, c.scheduled_time DESC, c.id DESC
+     LIMIT 15`,
+    params
+  );
+
+  for (const row of missing) {
+    try {
+      await generateParticipantDocuments(row.id, { skipIfExists: true });
+    } catch (err) {
+      console.error(`Document backfill failed for conference ${row.id}:`, err.message);
+    }
+  }
+};
+
 exports.getAll = async (req, res, next) => {
   try {
     await processTimedOutConferences();
@@ -160,7 +186,7 @@ exports.getAll = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: rows,
+      data: videoService.withMeetingLinks(rows),
       pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
     });
   } catch (err) { next(err); }
@@ -209,12 +235,13 @@ exports.getSchedule = async (req, res, next) => {
       c.scheduled_date ASC, c.scheduled_time ASC`;
     const [rows] = await pool.execute(query, params);
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.json({ success: true, data: rows, range });
+    res.json({ success: true, data: videoService.withMeetingLinks(rows), range });
   } catch (err) { next(err); }
 };
 
 exports.getDocuments = async (req, res, next) => {
   try {
+    await backfillMissingDocuments(req);
     const { search, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
@@ -222,11 +249,21 @@ exports.getDocuments = async (req, res, next) => {
     const params = [];
 
     where = await applyRoleFilter(req, where, params);
+    where += ` AND d.file_type = 'pdf'
+      AND d.id = (
+        SELECT MAX(d2.id)
+        FROM conference_generated_documents d2
+        WHERE d2.conference_id = d.conference_id AND d2.file_type = 'pdf'
+      )`;
 
     if (search) {
+      const term = `%${search}%`;
+      const codeMatch = String(search).trim().toUpperCase().match(/^DOC-?(\d+)$/);
       where += ` AND (c.conference_code LIKE ? OR d.original_name LIKE ?
-        OR d.participant_name LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+        OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
+        OR CAST(d.id AS CHAR) LIKE ?${codeMatch ? ' OR d.id = ?' : ''})`;
+      params.push(term, term, term, term);
+      if (codeMatch) params.push(parseInt(codeMatch[1], 10));
     }
 
     const fromClause = `
@@ -253,14 +290,22 @@ exports.getDocuments = async (req, res, next) => {
               CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
               'generated' AS source
        ${fromClause} ${where}
-       ORDER BY d.created_at DESC, d.id DESC
+       ORDER BY c.scheduled_date DESC, c.scheduled_time DESC, d.id DESC
        LIMIT ? OFFSET ?`,
       listParams
     );
 
     res.json({
       success: true,
-      data: rows,
+      data: rows.map((row) => {
+        let documentCode = `DOC-${row.file_id}`;
+        try {
+          documentCode = formatDocumentCode(row.file_id);
+        } catch {
+          /* keep fallback */
+        }
+        return { ...row, document_code: documentCode };
+      }),
       pagination: { total: countRows[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
     });
   } catch (err) { next(err); }
@@ -283,9 +328,10 @@ exports.viewGeneratedDocument = async (req, res, next) => {
     }
 
     const file = rows[0];
-    const absolutePath = path.isAbsolute(file.file_path)
-      ? file.file_path
-      : path.join(__dirname, '..', file.file_path);
+    const storedPath = String(file.file_path || '').replace(/\\/g, '/');
+    const absolutePath = path.isAbsolute(storedPath)
+      ? storedPath
+      : path.resolve(__dirname, '..', storedPath);
 
     if (!fs.existsSync(absolutePath)) {
       return res.status(404).json({ success: false, message: 'Document not found on disk' });
@@ -296,12 +342,14 @@ exports.viewGeneratedDocument = async (req, res, next) => {
       docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     };
     const mimeType = mimeMap[file.file_type] || 'application/octet-stream';
-    const safeName = String(file.original_name || 'document').replace(/"/g, '');
+    const documentCode = formatDocumentCode(fileId);
+    const safeName = `${documentCode}.pdf`.replace(/"/g, '');
     const disposition = req.query.download === '1' ? 'attachment' : 'inline';
 
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
-    res.sendFile(absolutePath);
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.sendFile(absolutePath);
   } catch (err) { next(err); }
 };
 
@@ -428,7 +476,7 @@ exports.create = async (req, res, next) => {
     await ensureConferenceSequence(conn);
     await conn.beginTransaction();
     const conferenceCode = await allocateConferenceCode(conn);
-    const link = meeting_link || `https://meet.amc.com/${conferenceCode.toLowerCase()}`;
+    const link = meeting_link || videoService.buildMeetingLink(conferenceCode);
 
     const [result] = await conn.execute(
       `INSERT INTO conferences (conference_code, patient_id, gp_id, ahp_id, scheduled_date, scheduled_time, meeting_link, notes, created_by)
@@ -486,6 +534,15 @@ exports.update = async (req, res, next) => {
 
     values.push(req.params.id);
     await pool.execute(`UPDATE conferences SET ${updates.join(', ')} WHERE id = ?`, values);
+
+    if (req.body.status === 'completed') {
+      try {
+        await generateParticipantDocuments(req.params.id, { skipIfExists: true });
+      } catch (docErr) {
+        console.error('Document generation failed:', docErr.message);
+      }
+    }
+
     res.json({ success: true, message: 'Conference updated' });
   } catch (err) { next(err); }
 };
@@ -604,9 +661,17 @@ exports.join = async (req, res, next) => {
       data: {
         provider: room.provider,
         roomId: room.roomId,
-        iceServers,
+        jitsiUrl: room.jitsiUrl,
+        jitsiDomain: room.jitsiDomain,
+        iceServers: room.provider === 'jitsi' ? [] : iceServers,
         displayName,
-        conference: { id: conference.id, status: 'live', conference_code: conference.conference_code },
+        patientName: conference.patient_name || '',
+        conference: {
+          id: conference.id,
+          status: 'live',
+          conference_code: conference.conference_code,
+          patient_name: conference.patient_name || '',
+        },
       },
     });
   } catch (err) { next(err); }
@@ -674,7 +739,7 @@ exports.end = async (req, res, next) => {
     }
 
     await pool.execute(
-      `UPDATE conferences SET status = 'completed', ended_at = NOW() WHERE id = ?`,
+      `UPDATE conferences SET status = 'completed', ended_at = NOW(), room_id = NULL WHERE id = ?`,
       [conference.id]
     );
 
@@ -687,7 +752,7 @@ exports.end = async (req, res, next) => {
     await lockReportsAfterMeeting(conference.id);
 
     try {
-      await generateParticipantDocuments(conference.id);
+      await generateParticipantDocuments(conference.id, { skipIfExists: true });
     } catch (docErr) {
       console.error('Document generation failed:', docErr.message);
     }
@@ -699,6 +764,8 @@ exports.end = async (req, res, next) => {
        WHERE r.name = 'receptionist' AND u.status = 'active'`,
       ['Conference Ended', `Meeting ${conference.conference_code} ended — clinical documents are ready`, 'conference']
     );
+
+    emitConferenceEnded(conference.id);
 
     res.json({ success: true, message: 'Meeting ended and documents generated' });
   } catch (err) { next(err); }

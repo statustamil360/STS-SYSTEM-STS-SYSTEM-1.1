@@ -1,4 +1,5 @@
 const { ensureConferenceSequence, allocateConferenceCode } = require('../utils/conferenceId');
+const videoService = require('./videoService');
 
 const notifyUser = async (conn, userId, title, message) => {
   await conn.execute(
@@ -104,7 +105,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
 
   await ensureConferenceSequence(conn);
   const conferenceCode = await allocateConferenceCode(conn);
-  const meetingLink = `https://meet.amc.com/${conferenceCode.toLowerCase()}`;
+  const meetingLink = videoService.buildMeetingLink(conferenceCode);
 
   const [result] = await conn.execute(
     `INSERT INTO conferences (

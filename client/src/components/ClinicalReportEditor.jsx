@@ -4,20 +4,40 @@ import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import Link from '@tiptap/extension-link';
 import { useEffect, useRef } from 'react';
-import { Box, IconButton, Divider, Tooltip } from '@mui/material';
+import { Box, IconButton, Divider, Tooltip, Typography } from '@mui/material';
 import {
   FormatBold, FormatItalic, FormatUnderlined, FormatListBulleted,
   FormatListNumbered, FormatAlignLeft, FormatAlignCenter, FormatAlignRight,
 } from '@mui/icons-material';
 
+const insertedChunk = (transaction) => {
+  let text = '';
+  transaction.steps.forEach((step) => {
+    const slice = step.slice;
+    if (!slice?.content) return;
+    slice.content.forEach((node) => {
+      if (node.text) text += node.text;
+      else if (node.type?.name === 'hardBreak') text += '\n';
+    });
+  });
+  return text;
+};
+
 const ClinicalReportEditor = ({
   content,
   onChange,
+  onTyping,
+  remoteTyping = false,
+  typingName = 'Participant',
   editable = true,
   minHeight = 140,
 }) => {
-  const debounceRef = useRef(null);
+  const idleRef = useRef(null);
   const skipUpdate = useRef(false);
+  const onChangeRef = useRef(onChange);
+  const onTypingRef = useRef(onTyping);
+  onChangeRef.current = onChange;
+  onTypingRef.current = onTyping;
 
   const editor = useEditor({
     extensions: [
@@ -28,12 +48,25 @@ const ClinicalReportEditor = ({
     ],
     content: content || '',
     editable,
-    onUpdate: ({ editor: ed }) => {
-      if (!onChange) return;
-      clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        onChange(ed.getHTML());
-      }, 400);
+    onUpdate: ({ editor: ed, transaction }) => {
+      if (skipUpdate.current) return;
+      onTypingRef.current?.();
+      const html = ed.getHTML();
+      const chunk = insertedChunk(transaction);
+      const structural = transaction.steps.some((step) => !step.slice);
+      const flushNow = /[\s]/.test(chunk) || structural;
+      clearTimeout(idleRef.current);
+      if (flushNow) {
+        onChangeRef.current?.(html);
+        return;
+      }
+      idleRef.current = setTimeout(() => {
+        onChangeRef.current?.(ed.getHTML());
+      }, 800);
+    },
+    onBlur: ({ editor: ed }) => {
+      clearTimeout(idleRef.current);
+      onChangeRef.current?.(ed.getHTML());
     },
   });
 
@@ -44,6 +77,7 @@ const ClinicalReportEditor = ({
 
   useEffect(() => {
     if (!editor || content === undefined) return;
+    if (editor.isFocused) return;
     const current = editor.getHTML();
     if (content !== current) {
       skipUpdate.current = true;
@@ -51,6 +85,8 @@ const ClinicalReportEditor = ({
       skipUpdate.current = false;
     }
   }, [editor, content]);
+
+  useEffect(() => () => clearTimeout(idleRef.current), []);
 
   if (!editor) return null;
 
@@ -72,8 +108,9 @@ const ClinicalReportEditor = ({
   return (
     <Box
       sx={{
+        position: 'relative',
         border: '1px solid',
-        borderColor: 'divider',
+        borderColor: remoteTyping ? 'primary.light' : 'divider',
         borderRadius: 2,
         overflow: 'hidden',
         bgcolor: 'background.paper',
@@ -122,6 +159,47 @@ const ClinicalReportEditor = ({
       >
         <EditorContent editor={editor} />
       </Box>
+      {remoteTyping && (
+        <Box
+          sx={{
+            position: 'absolute',
+            right: 10,
+            bottom: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 1,
+            py: 0.35,
+            borderRadius: 999,
+            bgcolor: 'rgba(15,23,42,0.82)',
+            color: 'common.white',
+            pointerEvents: 'none',
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1 }}>
+            {typingName}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 0.4, alignItems: 'flex-end', height: 10 }}>
+            {[0, 1, 2].map((i) => (
+              <Box
+                key={i}
+                sx={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: '50%',
+                  bgcolor: 'common.white',
+                  animation: 'stsTypingBounce 1s ease-in-out infinite',
+                  animationDelay: `${i * 0.16}s`,
+                  '@keyframes stsTypingBounce': {
+                    '0%, 80%, 100%': { transform: 'translateY(0)', opacity: 0.45 },
+                    '40%': { transform: 'translateY(-4px)', opacity: 1 },
+                  },
+                }}
+              />
+            ))}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 };

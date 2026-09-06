@@ -11,6 +11,8 @@ const {
   listExistingProducers,
   getPeer,
 } = require('./mediasoupService');
+const { buildIceServers } = require('./turnService');
+const webrtcConfig = require('../config/webrtc');
 
 const conferenceRoom = (conferenceId) => `conference:${conferenceId}`;
 
@@ -40,7 +42,13 @@ const registerMediasoupHandlers = (io, socket) => {
       const rtpCapabilities = await getRouterRtpCapabilities(activeConferenceId);
       const existingProducers = listExistingProducers(activeConferenceId, peerId);
 
-      ackOk(cb, { rtpCapabilities, existingProducers, peerId });
+      ackOk(cb, {
+        rtpCapabilities,
+        existingProducers,
+        peerId,
+        iceServers: buildIceServers(),
+        iceTransportPolicy: webrtcConfig.iceTransportPolicy,
+      });
     } catch (err) {
       console.error('[ms:join]', err.message);
       ackErr(cb, err.message);
@@ -51,7 +59,7 @@ const registerMediasoupHandlers = (io, socket) => {
     try {
       const { conferenceId, direction } = payload || {};
       const transport = await createWebRtcTransport(conferenceId, peerId, direction);
-      ackOk(cb, { transport });
+      ackOk(cb, { transport, iceServers: buildIceServers() });
     } catch (err) {
       ackErr(cb, err.message);
     }
@@ -100,6 +108,15 @@ const registerMediasoupHandlers = (io, socket) => {
     try {
       await resumeConsumer(payload.conferenceId, peerId, payload.consumerId);
       ackOk(cb, {});
+    } catch (err) {
+      ackErr(cb, err.message);
+    }
+  });
+
+  socket.on('ms:listProducers', (payload, cb) => {
+    try {
+      const conferenceId = payload?.conferenceId || activeConferenceId;
+      ackOk(cb, { producers: listExistingProducers(conferenceId, peerId) });
     } catch (err) {
       ackErr(cb, err.message);
     }

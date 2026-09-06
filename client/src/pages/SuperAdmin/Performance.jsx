@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Card, CardContent, Typography, Grid, LinearProgress, Box, Chip, Stack, Divider,
-  CircularProgress,
 } from '@mui/material';
 import {
   Speed, Memory, Storage, NetworkCheck, CheckCircle, Schedule, RefreshOutlined,
@@ -13,6 +12,7 @@ import {
 import { useSelector } from 'react-redux';
 import api from '../../services/api';
 import { ROLES } from '../../utils/constants';
+import PageLoader from '../../components/PageLoader';
 
 const getBarColor = (value) => {
   if (value >= 85) return 'error';
@@ -61,11 +61,7 @@ const Performance = () => {
   }, [isSuperAdmin]);
 
   if (loading) {
-    return (
-      <Box sx={{ display: 'grid', placeItems: 'center', minHeight: 320 }}>
-        <CircularProgress />
-      </Box>
-    );
+    return <PageLoader message="Loading performance dashboard..." />;
   }
 
   if (error || !metrics) {

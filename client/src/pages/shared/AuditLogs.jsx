@@ -15,6 +15,7 @@ import {
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { refreshNotificationBadge } from '../../utils/notificationRefresh';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const ACTION_OPTIONS = [
   { value: '', label: 'All Actions' },
@@ -46,31 +47,24 @@ const actionColor = (action) => {
 
 const AuditLogs = () => {
   const { formatDateTime } = useSystemDateTime();
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
   const [filters, setFilters] = useState({ action: '', entity_type: '' });
   const [exporting, setExporting] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { page: page + 1, limit: rowsPerPage };
-      if (filters.action) params.action = filters.action;
-      if (filters.entity_type) params.entity_type = filters.entity_type;
-      const { data } = await api.get('/audit', { params });
-      setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch {
-      toast.error('Failed to load audit logs');
-    } finally {
-      setLoading(false);
-    }
-  }, [page, rowsPerPage, filters]);
+  const fetchLogs = useCallback(async ({ page: pageNum, limit }) => {
+    const params = { page: pageNum, limit };
+    if (filters.action) params.action = filters.action;
+    if (filters.entity_type) params.entity_type = filters.entity_type;
+    const { data } = await api.get('/audit', { params });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [filters]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, error,
+  } = useProgressiveTable(fetchLogs);
+
+  useEffect(() => {
+    if (error) toast.error('Failed to load audit logs');
+  }, [error]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -204,6 +198,7 @@ const AuditLogs = () => {
         columns={columns}
         rows={rows}
         loading={loading}
+        loadingMore={loadingMore}
         total={total}
         page={page}
         rowsPerPage={rowsPerPage}

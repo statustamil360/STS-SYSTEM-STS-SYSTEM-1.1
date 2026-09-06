@@ -1,33 +1,57 @@
 import { Box, Chip, Typography } from '@mui/material';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { applySpeakerSink } from '../utils/mediaDevices';
 
 const VideoTile = ({ stream, label, role, isLocal = false }) => {
   const videoRef = useRef(null);
-  const audioRef = useRef(null);
+  const [hasVideo, setHasVideo] = useState(false);
 
   useEffect(() => {
     const videoEl = videoRef.current;
-    const audioEl = audioRef.current;
+    if (!videoEl) return undefined;
+
+    const refresh = () => {
+      const liveVideo = Boolean(stream?.getVideoTracks?.().length);
+      setHasVideo(liveVideo);
+      if (stream) {
+        videoEl.srcObject = stream;
+        if (!isLocal) applySpeakerSink(videoEl);
+        videoEl.play().catch(() => {});
+      }
+    };
+
     if (!stream) {
-      if (videoEl) videoEl.srcObject = null;
-      if (audioEl) audioEl.srcObject = null;
+      videoEl.srcObject = null;
+      setHasVideo(false);
       return undefined;
     }
 
-    const hasVideo = stream.getVideoTracks().some((t) => t.readyState === 'live');
-    if (hasVideo && videoEl) {
-      videoEl.srcObject = stream;
-    } else if (audioEl) {
-      audioEl.srcObject = stream;
-    }
+    const bindTrack = (track) => {
+      track.addEventListener('unmute', refresh);
+      track.addEventListener('mute', refresh);
+      track.addEventListener('ended', refresh);
+    };
+
+    const onAddTrack = (event) => {
+      bindTrack(event.track);
+      refresh();
+    };
+
+    stream.getTracks().forEach(bindTrack);
+    stream.addEventListener('addtrack', onAddTrack);
+    stream.addEventListener('removetrack', refresh);
+    refresh();
 
     return () => {
-      if (videoEl) videoEl.srcObject = null;
-      if (audioEl) audioEl.srcObject = null;
+      stream.removeEventListener('addtrack', onAddTrack);
+      stream.removeEventListener('removetrack', refresh);
+      stream.getTracks().forEach((track) => {
+        track.removeEventListener('unmute', refresh);
+        track.removeEventListener('mute', refresh);
+        track.removeEventListener('ended', refresh);
+      });
     };
-  }, [stream]);
-
-  const hasVideo = stream?.getVideoTracks?.().some((t) => t.enabled && t.readyState === 'live');
+  }, [stream, isLocal]);
 
   return (
     <Box
@@ -50,18 +74,22 @@ const VideoTile = ({ stream, label, role, isLocal = false }) => {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          display: hasVideo ? 'block' : 'none',
+          opacity: hasVideo ? 1 : 0,
         }}
       />
       {!hasVideo && (
-        <>
-          <audio ref={audioRef} autoPlay playsInline />
-          <Box sx={{ height: '100%', display: 'grid', placeItems: 'center', color: 'grey.400' }}>
-            <Typography variant="h5" fontWeight={700}>
-              {(label || '?').charAt(0).toUpperCase()}
-            </Typography>
-          </Box>
-        </>
+        <Box sx={{
+          position: 'absolute',
+          inset: 0,
+          display: 'grid',
+          placeItems: 'center',
+          color: 'grey.400',
+        }}
+        >
+          <Typography variant="h5" fontWeight={700}>
+            {(label || '?').charAt(0).toUpperCase()}
+          </Typography>
+        </Box>
       )}
       <Box sx={{ position: 'absolute', left: 8, bottom: 8, display: 'flex', gap: 0.5 }}>
         <Chip
@@ -108,7 +136,7 @@ const WebRTCVideoRoom = ({ localStream, remotePeers, displayName, userRole }) =>
       />
       {remotePeers.map((peer) => (
         <VideoTile
-          key={peer.peerId}
+          key={`${peer.peerId}-${peer.videoTrackCount || 0}`}
           stream={peer.stream}
           label={peer.displayName}
           role={peer.role}

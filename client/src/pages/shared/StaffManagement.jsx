@@ -25,6 +25,7 @@ import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import useRolePermissions from '../../hooks/useRolePermissions';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
 import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, WEEKDAY_SELECT_PLACEHOLDER, ROLES } from '../../utils/constants';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import {
@@ -447,11 +448,6 @@ const createStaffPage = ({
     const { user } = useSelector((state) => state.auth);
     const canResetPassword = enablePasswordReset
       && [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
-    const [rows, setRows] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [total, setTotal] = useState(0);
-    const [page, setPage] = useState(0);
-    const [rowsPerPage, setRowsPerPage] = useState(10);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [open, setOpen] = useState(false);
@@ -511,29 +507,27 @@ const createStaffPage = ({
       return name || code || row.email || singular;
     };
 
-    const fetchData = useCallback(async () => {
-      setLoading(true);
-      try {
-        const { data } = await api.get(endpoint, {
-          params: {
-            search: search || undefined,
-            status: statusFilter || undefined,
-            page: page + 1,
-            limit: rowsPerPage,
-          },
-        });
-        setRows(data.data ?? []);
-        setTotal(data.pagination.total);
-      } catch {
-        toast.error(`Failed to load ${title.toLowerCase()}`);
-      } finally {
-        setLoading(false);
-      }
-    }, [search, statusFilter, page, rowsPerPage]);
+    const fetchStaff = useCallback(async ({ page: pageNum, limit }) => {
+      const { data } = await api.get(endpoint, {
+        params: {
+          search: search || undefined,
+          status: statusFilter || undefined,
+          page: pageNum,
+          limit,
+        },
+      });
+      return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+    }, [search, statusFilter]);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    const {
+      rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
+    } = useProgressiveTable(fetchStaff);
 
-    usePageRefreshRegister(fetchData);
+    useEffect(() => {
+      if (error) toast.error(`Failed to load ${title.toLowerCase()}`);
+    }, [error]);
+
+    usePageRefreshRegister(reload);
 
     useEffect(() => {
       reloadFieldOptions();
@@ -608,7 +602,7 @@ const createStaffPage = ({
           setPage(0);
         }
         handleCloseForm();
-        fetchData();
+        reload();
       } catch (err) {
         const apiMessage = err.response?.data?.message;
         const validationErrors = err.response?.data?.errors;
@@ -641,7 +635,7 @@ const createStaffPage = ({
         setConfirmOpen(false);
         setPendingDelete(null);
         if (rows.length <= 1 && page > 0) setPage((p) => p - 1);
-        fetchData();
+        reload();
       } catch (err) {
         toast.error(err.response?.data?.message || 'Operation failed');
       } finally {
@@ -726,6 +720,7 @@ const createStaffPage = ({
           columns={columns}
           rows={rows}
           loading={loading}
+          loadingMore={loadingMore}
           total={total}
           page={page}
           rowsPerPage={rowsPerPage}

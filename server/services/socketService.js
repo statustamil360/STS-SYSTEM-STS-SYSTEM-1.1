@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const { verifyAccessToken } = require('../utils/token');
 const pool = require('../config/db');
 const { registerMediasoupHandlers } = require('./mediasoupSocket');
+const { corsOrigin } = require('../config/corsOrigins');
 
 let io = null;
 
@@ -23,9 +24,7 @@ const authenticateSocket = async (token) => {
 const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.NODE_ENV === 'development'
-        ? [/^http:\/\/localhost:\d+$/]
-        : [process.env.CLIENT_URL || 'http://localhost:5173'],
+      origin: corsOrigin,
       credentials: true,
     },
     path: '/socket.io',
@@ -67,7 +66,38 @@ const initSocket = (httpServer) => {
       });
     });
 
-    socket.on('disconnect', () => {});
+    socket.on('report-typing', (payload) => {
+      const { conferenceId, reportUserId, section, typing } = payload || {};
+      if (!conferenceId || !section) return;
+      socket.to(conferenceRoom(conferenceId)).emit('report-typing', {
+        reportUserId: Number(reportUserId) || socket.user.id,
+        section: String(section),
+        typing: Boolean(typing),
+        userId: socket.user.id,
+      });
+    });
+
+    socket.on('report-draft', (payload) => {
+      const { conferenceId, reportUserId, section, content } = payload || {};
+      if (!conferenceId || !section) return;
+      socket.to(conferenceRoom(conferenceId)).emit('report-draft', {
+        reportUserId: Number(reportUserId) || socket.user.id,
+        section: String(section),
+        content: String(content ?? ''),
+        userId: socket.user.id,
+      });
+    });
+
+    socket.on('disconnect', () => {
+      const conferenceId = socket.data.conferenceId;
+      if (!conferenceId || !socket.user?.id) return;
+      socket.to(conferenceRoom(conferenceId)).emit('report-typing', {
+        reportUserId: socket.user.id,
+        section: '*',
+        typing: false,
+        userId: socket.user.id,
+      });
+    });
   });
 
   return io;
@@ -80,4 +110,9 @@ const emitReportUpdate = (conferenceId, report, updatedBy) => {
   io.to(conferenceRoom(conferenceId)).emit('report-updated', { report, updatedBy });
 };
 
-module.exports = { initSocket, getIo, emitReportUpdate, conferenceRoom };
+const emitConferenceEnded = (conferenceId) => {
+  if (!io) return;
+  io.to(conferenceRoom(conferenceId)).emit('conference-ended', { conferenceId });
+};
+
+module.exports = { initSocket, getIo, emitReportUpdate, emitConferenceEnded, conferenceRoom };

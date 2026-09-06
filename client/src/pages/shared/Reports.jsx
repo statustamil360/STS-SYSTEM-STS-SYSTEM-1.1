@@ -17,6 +17,7 @@ import {
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { refreshNotificationBadge } from '../../utils/notificationRefresh';
+import PageLoader from '../../components/PageLoader';
 
 const REPORT_TYPES = [
   { value: 'conference', label: 'Conference Report' },
@@ -238,9 +239,7 @@ const Reports = () => {
               </Stack>
 
               {loading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 280 }}>
-                  <CircularProgress size={36} thickness={4} />
-                </Box>
+                <PageLoader message="Generating report..." />
               ) : result ? (
                 <>
                   <Box

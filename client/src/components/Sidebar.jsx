@@ -74,7 +74,7 @@ const Sidebar = ({ mobileOpen, onClose }) => {
   const location = useLocation();
   const { user } = useSelector((state) => state.auth);
   const { sidebarOpen } = useSelector((state) => state.ui);
-  const [openMenus, setOpenMenus] = useState({});
+  const [openMenus, setOpenMenus] = useState({ Settings: true });
   const isSuperAdmin = user?.role === ROLES.SUPER_ADMIN;
   const menuItems = MENU_CONFIG[user?.role] || [];
 

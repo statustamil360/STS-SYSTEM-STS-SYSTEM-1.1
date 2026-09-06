@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, MenuItem,
   Box, Typography, Stack, ToggleButton, ToggleButtonGroup, Button,
@@ -27,6 +27,8 @@ import { sortMeetingsByCountdown } from '../../hooks/useCountdown';
 import useDocumentDownloadAccess from '../../hooks/useDocumentDownloadAccess';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import useProgressiveTable from '../../hooks/useProgressiveTable';
+import PageLoader from '../../components/PageLoader';
 import mammoth from 'mammoth';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
@@ -73,6 +75,48 @@ const EXPORT_FORMATS = [
 
 const CARDS_PER_PAGE = 15;
 
+const PdfDocumentIcon = () => (
+  <Box
+    sx={{
+      width: 20,
+      height: 24,
+      flexShrink: 0,
+      borderRadius: '4px',
+      background: 'linear-gradient(165deg, #FB7185 0%, #F43F5E 38%, #E11D48 72%, #BE123C 100%)',
+      boxShadow: '0 2px 6px rgba(225, 29, 72, 0.28)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      pb: 0.25,
+      position: 'relative',
+      overflow: 'hidden',
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: 7,
+        height: 7,
+        background: 'linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.35) 50%)',
+      },
+    }}
+  >
+    <PictureAsPdfOutlined sx={{ color: '#fff', fontSize: 10, mb: 0 }} />
+    <Typography
+      sx={{
+        color: '#fff',
+        fontSize: 6,
+        fontWeight: 800,
+        letterSpacing: '0.06em',
+        lineHeight: 1,
+      }}
+    >
+      PDF
+    </Typography>
+  </Box>
+);
+
 const formatFileSize = (bytes) => {
   if (!bytes && bytes !== 0) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -86,17 +130,12 @@ const Conferences = () => {
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const canViewAttendance = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(user?.role);
   const canUpdateStatus = isClinical;
-  const [rows, setRows] = useState([]);
   const [todayMeetings, setTodayMeetings] = useState([]);
   const [scheduleRange, setScheduleRange] = useState('today');
   const [schedulePage, setSchedulePage] = useState(1);
   const [loadingToday, setLoadingToday] = useState(true);
   const [accepting, setAccepting] = useState(null);
   const [joining, setJoining] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
@@ -111,16 +150,12 @@ const Conferences = () => {
   const [sortTick, setSortTick] = useState(() => Date.now());
   const { register, handleSubmit, reset, control } = useForm();
 
-  const [documents, setDocuments] = useState([]);
-  const [documentsLoading, setDocumentsLoading] = useState(true);
-  const [documentsTotal, setDocumentsTotal] = useState(0);
-  const [documentsPage, setDocumentsPage] = useState(0);
-  const [documentsPerPage, setDocumentsPerPage] = useState(10);
   const [documentsSearch, setDocumentsSearch] = useState('');
 
   const [docPreview, setDocPreview] = useState({
     open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null,
   });
+  const previewUrlRef = useRef('');
   const [reportFilters, setReportFilters] = useState({ start_date: '', end_date: '', status: '' });
   const [exporting, setExporting] = useState(null);
   const [attendanceOpen, setAttendanceOpen] = useState(false);
@@ -131,9 +166,16 @@ const Conferences = () => {
     setAttendanceOpen(true);
   };
 
+  const revokePreviewUrl = useCallback(() => {
+    if (previewUrlRef.current) {
+      window.URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = '';
+    }
+  }, []);
+
   useEffect(() => () => {
-    if (docPreview.url) window.URL.revokeObjectURL(docPreview.url);
-  }, [docPreview.url]);
+    if (previewUrlRef.current) window.URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
 
   const sortedTodayMeetings = useMemo(
     () => sortMeetingsByCountdown(todayMeetings, sortTick),
@@ -190,54 +232,69 @@ const Conferences = () => {
     }
   }, [scheduleRange]);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/conferences', {
-        params: {
-          scope: 'history',
-          search: search || undefined,
-          status: statusFilter || undefined,
-          page: page + 1,
-          limit: rowsPerPage,
-        },
-      });
-      setRows(data.data ?? []);
-      setTotal(data.pagination.total);
-    } catch { toast.error('Failed to load conferences'); }
-    finally { setLoading(false); }
-  }, [search, statusFilter, page, rowsPerPage]);
+  const fetchHistory = useCallback(async ({ page: pageNum, limit }) => {
+    const { data } = await api.get('/conferences', {
+      params: {
+        scope: 'history',
+        search: search || undefined,
+        status: statusFilter || undefined,
+        page: pageNum,
+        limit,
+      },
+    });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [search, statusFilter]);
 
-  const fetchDocuments = useCallback(async () => {
-    setDocumentsLoading(true);
-    try {
-      const { data } = await api.get('/conferences/documents', {
-        params: {
-          search: documentsSearch || undefined,
-          page: documentsPage + 1,
-          limit: documentsPerPage,
-        },
-      });
-      setDocuments(data.data ?? []);
-      setDocumentsTotal(data.pagination?.total ?? 0);
-    } catch { toast.error('Failed to load conference documents'); }
-    finally { setDocumentsLoading(false); }
-  }, [documentsSearch, documentsPage, documentsPerPage]);
+  const {
+    rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload: reloadHistory, error: historyError,
+  } = useProgressiveTable(fetchHistory, { enabled: activeTab === 'history' });
+
+  const fetchDocumentsPage = useCallback(async ({ page: pageNum, limit }) => {
+    const { data } = await api.get('/conferences/documents', {
+      params: {
+        search: documentsSearch || undefined,
+        page: pageNum,
+        limit,
+      },
+    });
+    return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
+  }, [documentsSearch]);
+
+  const {
+    rows: documents,
+    loading: documentsLoading,
+    loadingMore: documentsLoadingMore,
+    total: documentsTotal,
+    page: documentsPage,
+    setPage: setDocumentsPage,
+    rowsPerPage: documentsPerPage,
+    setRowsPerPage: setDocumentsPerPage,
+    reload: reloadDocuments,
+    error: documentsError,
+  } = useProgressiveTable(fetchDocumentsPage, { enabled: activeTab === 'documents' });
+
+  useEffect(() => {
+    if (historyError) toast.error('Failed to load conferences');
+  }, [historyError]);
+
+  useEffect(() => {
+    if (documentsError) toast.error('Failed to load conference documents');
+  }, [documentsError]);
 
   const refreshAll = useCallback(() => {
     fetchToday({ silent: true });
-    if (activeTab === 'history') fetchData();
-  }, [fetchToday, fetchData, activeTab]);
+    if (activeTab === 'history') reloadHistory();
+  }, [fetchToday, reloadHistory, activeTab]);
 
   const refreshPage = useCallback(async () => {
     if (activeTab === 'upcoming') {
       await fetchToday();
     } else if (activeTab === 'history') {
-      await fetchData();
+      await reloadHistory();
     } else if (activeTab === 'documents') {
-      await fetchDocuments();
+      await reloadDocuments();
     }
-  }, [activeTab, fetchToday, fetchData, fetchDocuments]);
+  }, [activeTab, fetchToday, reloadHistory, reloadDocuments]);
 
   usePageRefreshRegister(refreshPage);
 
@@ -245,14 +302,6 @@ const Conferences = () => {
   useEffect(() => {
     if (requestedTab !== activeTab) setSearchParams({ tab: activeTab }, { replace: true });
   }, [requestedTab, activeTab, setSearchParams]);
-
-  useEffect(() => {
-    if (activeTab === 'history') fetchData();
-  }, [fetchData, activeTab]);
-
-  useEffect(() => {
-    if (activeTab === 'documents') fetchDocuments();
-  }, [fetchDocuments, activeTab]);
 
   useEffect(() => {
     fetchToday();
@@ -342,11 +391,9 @@ const Conferences = () => {
   };
 
   const closeDocPreview = useCallback(() => {
-    setDocPreview((prev) => {
-      if (prev.url) window.URL.revokeObjectURL(prev.url);
-      return { open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null };
-    });
-  }, []);
+    revokePreviewUrl();
+    setDocPreview({ open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null });
+  }, [revokePreviewUrl]);
 
   const openDocument = async (row, { download = false } = {}) => {
     if (download && !canDownloadDocuments) {
@@ -363,7 +410,7 @@ const Conferences = () => {
         const url = window.URL.createObjectURL(data);
         const link = document.createElement('a');
         link.href = url;
-        link.download = row.original_name || 'document';
+        link.download = `${row.document_code || 'document'}.pdf`;
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -374,27 +421,53 @@ const Conferences = () => {
       return;
     }
 
-    setDocPreview((prev) => {
-      if (prev.url) window.URL.revokeObjectURL(prev.url);
-      return {
-        open: true,
-        loading: true,
-        url: '',
-        fileName: row.original_name || 'Document',
-        mode: null,
-        html: '',
-        row,
-      };
+    revokePreviewUrl();
+    setDocPreview({
+      open: true,
+      loading: true,
+      url: '',
+      fileName: row.document_code || 'Document',
+      mode: null,
+      html: '',
+      row,
     });
 
     try {
       const { data, headers } = await api.get(
         `/conferences/${row.conference_id}/documents/${row.file_id}/view`,
-        { responseType: 'blob' }
+        {
+          responseType: 'blob',
+          headers: { Accept: 'application/pdf,application/octet-stream' },
+        }
       );
-      const mime = data.type || headers['content-type'] || '';
-      const fileName = row.original_name || 'Document';
-      const mode = resolveDocPreviewMode(mime, fileName, row.mime_type);
+      const headerMime = String(headers['content-type'] || data.type || '').toLowerCase();
+      const signature = await data.slice(0, 8).text();
+      const isPdf = signature.startsWith('%PDF');
+      const isJson = headerMime.includes('json') || signature.trim().startsWith('{');
+
+      if (isJson || data.size < 8) {
+        throw new Error('Document is not available');
+      }
+
+      const fileName = row.document_code || 'Document';
+
+      if (isPdf) {
+        const pdfBlob = new Blob([data], { type: 'application/pdf' });
+        const url = window.URL.createObjectURL(pdfBlob);
+        previewUrlRef.current = url;
+        setDocPreview({
+          open: true,
+          loading: false,
+          url,
+          fileName,
+          mode: 'pdf',
+          html: '',
+          row,
+        });
+        return;
+      }
+
+      const mode = resolveDocPreviewMode(headerMime, fileName, row.mime_type);
 
       if (mode === 'docx') {
         const arrayBuffer = await data.arrayBuffer();
@@ -406,20 +479,6 @@ const Conferences = () => {
           fileName,
           mode: 'docx',
           html: result.value,
-          row,
-        });
-        return;
-      }
-
-      if (mode === 'pdf') {
-        const url = window.URL.createObjectURL(data);
-        setDocPreview({
-          open: true,
-          loading: false,
-          url,
-          fileName,
-          mode: 'pdf',
-          html: '',
           row,
         });
         return;
@@ -474,18 +533,13 @@ const Conferences = () => {
     { field: 'conference_code', headerName: 'Conference ID' },
     { field: 'patient_name', headerName: 'Patient' },
     {
-      field: 'original_name',
+      field: 'document_code',
       headerName: 'Document',
       render: (r) => (
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <PictureAsPdfOutlined
-            sx={{
-              fontSize: 18,
-              color: /\.pdf$/i.test(r.original_name || '') ? 'error.main' : 'text.disabled',
-            }}
-          />
-          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
-            {r.original_name}
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+          <PdfDocumentIcon />
+          <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main', letterSpacing: '-0.01em' }} noWrap>
+            {r.document_code || '—'}
           </Typography>
         </Stack>
       ),
@@ -709,7 +763,7 @@ const Conferences = () => {
         </Stack>
 
         {loadingToday ? (
-          <Typography color="text.secondary">Loading scheduled meetings...</Typography>
+          <PageLoader message="Loading scheduled meetings..." />
         ) : todayMeetings.length === 0 ? (
           <Box
             sx={{
@@ -798,6 +852,7 @@ const Conferences = () => {
           columns={columns}
           rows={rows}
           loading={loading}
+          loadingMore={loadingMore}
           total={total}
           page={page}
           rowsPerPage={rowsPerPage}
@@ -817,14 +872,17 @@ const Conferences = () => {
           columns={documentColumns}
           rows={documents}
           loading={documentsLoading}
+          loadingMore={documentsLoadingMore}
           total={documentsTotal}
           page={documentsPage}
           rowsPerPage={documentsPerPage}
           onPageChange={setDocumentsPage}
           onRowsPerPageChange={(v) => { setDocumentsPerPage(v); setDocumentsPage(0); }}
           onSearch={(v) => { setDocumentsSearch(v); setDocumentsPage(0); }}
-          searchPlaceholder="Search by conference ID, patient, or file name..."
+          searchPlaceholder="Search by document ID, conference ID, or patient..."
           actions={false}
+          defaultSortField="scheduled_date"
+          defaultSortOrder="desc"
         />
       )}
 
@@ -1222,21 +1280,29 @@ const Conferences = () => {
           </Stack>
         </Box>
 
-        <DialogContent sx={{ p: 0, bgcolor: '#4a4f56' }}>
+        <DialogContent sx={{ p: 0, bgcolor: 'grey.200' }}>
           {docPreview.loading ? (
             <Stack alignItems="center" justifyContent="center" sx={{ py: 14 }}>
-              <CircularProgress sx={{ color: 'common.white' }} />
-              <Typography variant="body2" sx={{ mt: 2, color: 'grey.300', fontWeight: 500 }}>
+              <CircularProgress />
+              <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary', fontWeight: 500 }}>
                 Opening document…
               </Typography>
             </Stack>
           ) : docPreview.mode === 'pdf' ? (
-            <Box
-              component="iframe"
-              title={docPreview.fileName}
-              src={docPreview.url}
-              sx={{ width: '100%', height: { xs: '60vh', md: '72vh' }, border: 0, display: 'block' }}
-            />
+            <Box sx={{ width: '100%', height: { xs: '60vh', md: '72vh' }, bgcolor: 'common.white' }}>
+              <object
+                data={`${docPreview.url}#toolbar=1&navpanes=0`}
+                type="application/pdf"
+                aria-label={docPreview.fileName}
+                style={{ width: '100%', height: '100%', display: 'block', border: 0 }}
+              >
+                <iframe
+                  title={docPreview.fileName}
+                  src={`${docPreview.url}#toolbar=1&navpanes=0`}
+                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                />
+              </object>
+            </Box>
           ) : docPreview.mode === 'docx' ? (
             <Box sx={{ p: { xs: 2, sm: 3 }, maxHeight: { xs: '60vh', md: '72vh' }, overflow: 'auto' }}>
               <Paper

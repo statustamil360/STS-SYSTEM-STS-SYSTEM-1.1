@@ -15,7 +15,7 @@ Browser  →  https://your-domain.com
               MySQL (amc_teleconference)
 ```
 
-Optional: **private WebRTC** (mediasoup + coturn on your VPS). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md). Jitsi and Daily.co are no longer used.
+Video uses **self-hosted Jitsi** (`JITSI_BASE_URL`, default `https://meet.asterixmc.com`). Install commands for the Contabo VPS: [docs/JITSI_CONTABO.md](docs/JITSI_CONTABO.md). Optional fallback: **private WebRTC** (mediasoup). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md).
 
 ---
 
@@ -93,7 +93,10 @@ JWT_REFRESH_EXPIRES_IN=7d
 UPLOAD_DIR=uploads
 CLIENT_URL=https://your-domain.com
 
-# Private WebRTC (mediasoup + coturn on VPS)
+VIDEO_PROVIDER=jitsi
+JITSI_BASE_URL=https://meet.asterixmc.com
+
+# Private WebRTC (mediasoup + coturn) — only if VIDEO_PROVIDER=webrtc
 WEBRTC_LISTEN_IP=0.0.0.0
 WEBRTC_ANNOUNCED_IP=YOUR_PUBLIC_VPS_IP
 STUN_URLS=stun:turn.yourdomain.com:3478

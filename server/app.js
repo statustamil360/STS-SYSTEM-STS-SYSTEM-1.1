@@ -5,7 +5,8 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { clientUrl, uploadDir } = require('./config/jwt');
+const { uploadDir } = require('./config/jwt');
+const { corsOrigin } = require('./config/corsOrigins');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { recordRequest } = require('./utils/requestMetrics');
 
@@ -26,30 +27,40 @@ const performanceRoutes = require('./routes/performanceRoutes');
 
 const app = express();
 
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+const jitsiOrigin = (() => {
+  try {
+    return new URL(process.env.JITSI_BASE_URL || 'https://meet.asterixmc.com').origin;
+  } catch {
+    return 'https://meet.asterixmc.com';
+  }
+})();
+
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", jitsiOrigin],
       styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
       imgSrc: ["'self'", 'data:', 'https:'],
       fontSrc: ["'self'", 'https:', 'data:'],
-      connectSrc: ["'self'", 'https:', 'wss:'],
-      frameSrc: ["'self'"],
+      connectSrc: ["'self'", 'https:', 'wss:', 'stun:', 'turn:', 'turns:'],
+      frameSrc: ["'self'", jitsiOrigin, 'blob:', 'data:'],
+      childSrc: ["'self'", jitsiOrigin, 'blob:', 'data:'],
+      objectSrc: ["'self'", 'blob:', 'data:'],
+      workerSrc: ["'self'", 'blob:'],
+      mediaSrc: ["'self'", 'blob:', 'mediastream:', 'data:'],
     },
   },
 }));
 app.use(cors({
-  origin: process.env.NODE_ENV === 'development'
-    ? (origin, callback) => {
-        if (!origin || /^http:\/\/localhost:\d+$/.test(origin) || origin === clientUrl) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      }
-    : clientUrl,
+  origin: corsOrigin,
   credentials: true,
 }));
 app.use(morgan('dev'));
