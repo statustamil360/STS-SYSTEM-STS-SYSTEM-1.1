@@ -62,7 +62,7 @@ export const formatWeekdayInitials = (value) => {
 
 export const STATUS_COLORS = {
   active: 'success',
-  inactive: 'default',
+  inactive: 'error',
   disabled: 'error',
   scheduled: 'info',
   waiting: 'warning',

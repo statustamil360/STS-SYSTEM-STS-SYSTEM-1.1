@@ -54,7 +54,7 @@ const run = async () => {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'amc_teleconference',
+    database: process.env.DB_NAME || 'amc_asterix',
     multipleStatements: true,
   });
 
@@ -126,7 +126,7 @@ const run = async () => {
           gpId,
           ahpId,
           'Demo Teleconference — Today',
-          'Sample meeting for GP accept / AHP join workflow',
+          'Sample meeting for reception open / participant join workflow',
           receptionistUserId,
         ]
       );

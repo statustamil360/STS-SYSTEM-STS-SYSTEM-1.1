@@ -2,3 +2,7 @@
 export const refreshNotificationBadge = () => {
   window.dispatchEvent(new CustomEvent('notifications:refresh'));
 };
+
+export const refreshInboxTaskBadge = () => {
+  window.dispatchEvent(new CustomEvent('tasks:inbox-refresh'));
+};

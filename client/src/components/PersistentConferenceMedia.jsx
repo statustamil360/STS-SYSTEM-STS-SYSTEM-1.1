@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Button, IconButton, Stack, Typography } from '@mui/material';
 import {
-  CallEndOutlined, ExitToAppOutlined, MicOffOutlined, MicOutlined,
+  ExitToAppOutlined, MicOffOutlined, MicOutlined,
   OpenInFullOutlined, VideocamOffOutlined, VideocamOutlined,
 } from '@mui/icons-material';
 import { useSelector } from 'react-redux';
@@ -10,7 +10,6 @@ import useMediasoupConference from '../hooks/useMediasoupConference';
 import useConferenceSocket from '../hooks/useConferenceSocket';
 import JitsiVideoRoom from './JitsiVideoRoom';
 import WebRTCVideoRoom from './WebRTCVideoRoom';
-import { ROLES } from '../utils/constants';
 
 const LiveDot = () => (
   <Box
@@ -42,7 +41,6 @@ const PersistentConferenceMedia = () => {
     registerMediaApi,
     restoreSession,
     leaveSession,
-    endSession,
     handleRemoteEnded,
     showMiniPopup,
     setMediaState,
@@ -55,7 +53,6 @@ const PersistentConferenceMedia = () => {
   const roomInfo = session?.roomInfo;
   const isJitsi = roomInfo?.provider === 'jitsi';
   const patientName = session?.patientName || roomInfo?.patientName || roomInfo?.conference?.patient_name || '';
-  const isGp = currentUser?.role === ROLES.GP;
   const jitsiEmail = currentUser?.email || (currentUser?.id ? `user-${currentUser.id}@sts.local` : undefined);
   const jitsiRef = useRef(null);
 
@@ -182,10 +179,10 @@ const PersistentConferenceMedia = () => {
             patientName={patientName}
             jitsiUrl={roomInfo?.jitsiUrl}
             userEmail={jitsiEmail}
-            isHost={isGp}
+            isHost={false}
             onJoined={() => setJitsiLive(true)}
             onLeft={leaveSession}
-            onEndMeeting={endSession}
+            onEndMeeting={leaveSession}
             onParticipantCount={setJitsiParticipants}
           />
         ) : (
@@ -253,29 +250,16 @@ const PersistentConferenceMedia = () => {
                   </IconButton>
                 </>
               )}
-              {isGp ? (
-                <Button
-                  size="small"
-                  color="error"
-                  variant="contained"
-                  startIcon={<CallEndOutlined />}
-                  onClick={endSession}
-                  sx={{ ml: 'auto', minWidth: 0, px: 1.25, fontWeight: 700 }}
-                >
-                  End
-                </Button>
-              ) : (
-                <Button
-                  size="small"
-                  color="error"
-                  variant="contained"
-                  startIcon={<ExitToAppOutlined />}
-                  onClick={leaveSession}
-                  sx={{ ml: 'auto', minWidth: 0, px: 1.25, fontWeight: 700 }}
-                >
-                  Leave
-                </Button>
-              )}
+              <Button
+                size="small"
+                color="error"
+                variant="contained"
+                startIcon={<ExitToAppOutlined />}
+                onClick={leaveSession}
+                sx={{ ml: 'auto', minWidth: 0, px: 1.25, fontWeight: 700 }}
+              >
+                Leave
+              </Button>
             </Stack>
           </Box>
         </Box>

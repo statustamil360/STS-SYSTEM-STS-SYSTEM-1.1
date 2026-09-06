@@ -4,6 +4,7 @@ import {
   Box, TextField, Button, Typography, Paper, Stack, Alert, CircularProgress,
 } from '@mui/material';
 import { LoginOutlined, VideoCallOutlined } from '@mui/icons-material';
+import PasswordTextField from '../components/PasswordReveal';
 import { useDispatch } from 'react-redux';
 import { login } from '../redux/slices/authSlice';
 import api from '../services/api';
@@ -85,9 +86,8 @@ const GuestConferenceLogin = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
-            <TextField
+            <PasswordTextField
               label="Temporary password"
-              type="password"
               required
               fullWidth
               value={password}

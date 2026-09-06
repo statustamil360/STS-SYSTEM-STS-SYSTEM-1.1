@@ -122,7 +122,7 @@ Update `server/.env` as needed:
 | `DB_PORT` | Database port (default: `3306`) |
 | `DB_USER` | Database user (default: `root`) |
 | `DB_PASSWORD` | Database password (empty for default XAMPP) |
-| `DB_NAME` | Database name (`amc_teleconference`) |
+| `DB_NAME` | Database name (`amc_asterix`) |
 | `JWT_SECRET` | Access token secret — **change for production** |
 | `JWT_REFRESH_SECRET` | Refresh token secret — **change for production** |
 | `CLIENT_URL` | Frontend URL (default: `http://localhost:5173`) |
@@ -147,7 +147,7 @@ npm run seed
 
 This runs `server/database/seed.js`, which:
 
-- Creates the `amc_teleconference` database and tables from `schema.sql`
+- Creates the `amc_asterix` database and tables from `schema.sql`
 - Seeds demo users, patients, conferences, appointments, and sample data
 - Is safe to re-run (idempotent for core demo accounts)
 

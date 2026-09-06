@@ -5,7 +5,7 @@ import {
   DialogTitle, DialogContent, DialogActions, TextField, Alert,
 } from '@mui/material';
 import {
-  CallEndOutlined, MicOutlined, MicOffOutlined, VideocamOutlined, VideocamOffOutlined,
+  MicOutlined, MicOffOutlined, VideocamOutlined, VideocamOffOutlined,
   ArrowBackOutlined, ExitToAppOutlined,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
@@ -46,7 +46,6 @@ const ConferenceRoom = () => {
     detachRoomView,
     registerVideoSlot,
     leaveSession,
-    endSession,
     isAssignedGp,
     setIsAssignedGp,
     jitsiLive,
@@ -62,7 +61,6 @@ const ConferenceRoom = () => {
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const videoSlotRef = useRef(null);
 
-  const isGp = user?.role === ROLES.GP;
   const isClinical = [ROLES.GP, ROLES.AHP, 'conference_guest'].includes(user?.role);
   const roomInfo = session?.conferenceId === String(id) || String(session?.conferenceId) === String(id)
     ? session?.roomInfo
@@ -159,29 +157,16 @@ const ConferenceRoom = () => {
   const participantLabel = `${participantCount} participant${participantCount === 1 ? '' : 's'}`;
 
   const MeetingActionButton = ({ size = 'medium' }) => (
-    isGp ? (
-      <Button
-        variant="contained"
-        color="error"
-        size={size}
-        startIcon={<CallEndOutlined />}
-        onClick={endSession}
-        disabled={videoControlsDisabled}
-      >
-        End Meeting
-      </Button>
-    ) : (
-      <Button
-        variant="contained"
-        color="error"
-        size={size}
-        startIcon={<ExitToAppOutlined />}
-        onClick={leaveSession}
-        disabled={videoControlsDisabled}
-      >
-        Leave Meeting
-      </Button>
-    )
+    <Button
+      variant="contained"
+      color="error"
+      size={size}
+      startIcon={<ExitToAppOutlined />}
+      onClick={leaveSession}
+      disabled={videoControlsDisabled}
+    >
+      Leave Meeting
+    </Button>
   );
 
   const videoControls = (
@@ -219,7 +204,7 @@ const ConferenceRoom = () => {
   return (
     <Box sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
-        <IconButton onClick={isGp ? undefined : leaveSession} disabled={isGp}><ArrowBackOutlined /></IconButton>
+        <IconButton onClick={leaveSession}><ArrowBackOutlined /></IconButton>
         <Typography variant="h6" fontWeight={700}>
           {patientName || 'Clinical Video Conference'}
         </Typography>

@@ -66,7 +66,7 @@ const Header = ({ onMobileMenuOpen }) => {
     };
   }, [location.pathname]);
 
-  const pageMeta = getPageMeta(location.pathname, user?.role);
+  const pageMeta = getPageMeta(location.pathname, user?.role, location.search);
   const showSystemClock = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
 
   const handleLogout = () => {

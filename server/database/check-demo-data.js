@@ -6,7 +6,7 @@ const mysql = require('mysql2/promise');
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'amc_teleconference',
+    database: process.env.DB_NAME || 'amc_asterix',
   });
   const [cols] = await c.query("SHOW COLUMNS FROM conferences LIKE 'appointment_id'");
   const [conf] = await c.query('SELECT id, conference_code, appointment_id, scheduled_date, scheduled_time, status, gp_id, ahp_id FROM conferences');

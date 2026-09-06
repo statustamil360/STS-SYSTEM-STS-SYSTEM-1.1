@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS amc_teleconference CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE amc_teleconference;
+CREATE DATABASE IF NOT EXISTS amc_asterix CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE amc_asterix;
 
 CREATE TABLE roles (
   id INT PRIMARY KEY AUTO_INCREMENT,
@@ -54,6 +54,7 @@ CREATE TABLE receptionists (
   id INT PRIMARY KEY AUTO_INCREMENT,
   user_id INT NOT NULL UNIQUE,
   receptionist_code VARCHAR(50) UNIQUE,
+  permissions JSON NULL,
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -187,6 +188,16 @@ CREATE TABLE appointments (
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE appointment_gps (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  appointment_id INT NOT NULL,
+  gp_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+  FOREIGN KEY (gp_id) REFERENCES gps(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_appointment_gp (appointment_id, gp_id)
+);
+
 CREATE TABLE appointment_ahps (
   id INT PRIMARY KEY AUTO_INCREMENT,
   appointment_id INT NOT NULL,
@@ -222,10 +233,36 @@ CREATE TABLE tasks (
   priority ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
   status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
   reminder_at TIMESTAMP NULL,
+  assignee_read_at TIMESTAMP NULL,
+  assigner_read_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE task_files (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  task_id INT NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  stored_name VARCHAR(255) NOT NULL,
+  file_path VARCHAR(500) NOT NULL,
+  file_size INT,
+  mime_type VARCHAR(100),
+  uploaded_by INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE task_updates (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  task_id INT NOT NULL,
+  user_id INT,
+  message TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE notifications (

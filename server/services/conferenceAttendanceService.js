@@ -87,6 +87,17 @@ const endSession = async (conferenceId, userId, executor = pool) => {
   return result.affectedRows;
 };
 
+/** Count participants who are still in the meeting (no leave recorded). */
+const countOpenSessions = async (conferenceId, executor = pool) => {
+  await ensureSessionsTable();
+  const [rows] = await executor.execute(
+    `SELECT COUNT(*) AS cnt FROM conference_participant_sessions
+     WHERE conference_id = ? AND left_at IS NULL`,
+    [conferenceId]
+  );
+  return Number(rows[0]?.cnt || 0);
+};
+
 /** Close all open sessions when a meeting ends or is cancelled. */
 const endAllSessions = async (conferenceId, executor = pool) => {
   await ensureSessionsTable();
@@ -156,6 +167,40 @@ const getConferenceAttendance = async (conferenceId) => {
     conference_id: Number(conferenceId),
     participants,
     meeting_total_seconds: participants.reduce((sum, p) => sum + p.total_seconds, 0),
+  };
+};
+
+const getConferenceParticipantOverview = async (conferenceId) => {
+  const [assigned] = await pool.execute(
+    `SELECT cp.user_id,
+            COALESCE(g.guest_role, cp.role_in_conference) AS role,
+            COALESCE(
+              NULLIF(TRIM(g.guest_name), ''),
+              NULLIF(TRIM(CONCAT(up.first_name, ' ', up.last_name)), ''),
+              u.username
+            ) AS display_name,
+            CASE WHEN g.id IS NOT NULL THEN 1 ELSE 0 END AS is_guest
+     FROM conference_participants cp
+     JOIN users u ON u.id = cp.user_id
+     LEFT JOIN user_profiles up ON up.user_id = cp.user_id
+     LEFT JOIN conference_guest_access g
+       ON g.conference_id = cp.conference_id
+      AND g.user_id = cp.user_id
+      AND g.revoked_at IS NULL
+     WHERE cp.conference_id = ?
+     ORDER BY cp.id`,
+    [conferenceId]
+  );
+
+  const attendance = await getConferenceAttendance(conferenceId);
+  return {
+    assigned: assigned.map((row) => ({
+      user_id: row.user_id,
+      role: row.role,
+      display_name: row.display_name,
+      is_guest: Boolean(row.is_guest),
+    })),
+    joined: attendance.participants,
   };
 };
 
@@ -252,6 +297,8 @@ const getJoinTimeReport = async (filters = {}) => {
            c.conference_code,
            DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS meeting_date,
            TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS meeting_time,
+           c.accepted_at,
+           c.ended_at,
            pat.id AS patient_id,
            CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
            s.user_id AS participant_user_id,
@@ -259,7 +306,7 @@ const getJoinTimeReport = async (filters = {}) => {
              NULLIF(TRIM(CONCAT(up.first_name, ' ', up.last_name)), ''),
              u.username
            ) AS participant_name,
-           cp.role_in_conference AS participant_role,
+           COALESCE(g.guest_role, cp.role_in_conference) AS participant_role,
            s.joined_at,
            s.left_at,
            ${sessionDurationSql} AS duration_seconds
@@ -270,6 +317,8 @@ const getJoinTimeReport = async (filters = {}) => {
     LEFT JOIN user_profiles up ON up.user_id = s.user_id
      LEFT JOIN conference_participants cp
        ON cp.conference_id = s.conference_id AND cp.user_id = s.user_id
+     LEFT JOIN conference_guest_access g
+       ON g.conference_id = s.conference_id AND g.user_id = s.user_id AND g.revoked_at IS NULL
      WHERE c.scheduled_date = ?
        AND c.status IN ('completed', 'cancelled', 'live')
   `;
@@ -280,8 +329,10 @@ const getJoinTimeReport = async (filters = {}) => {
     params.push(Number(patientId));
   }
 
-  if (role && ['gp', 'ahp'].includes(role)) {
-    query += ' AND cp.role_in_conference = ?';
+  if (role === 'guest') {
+    query += ' AND g.id IS NOT NULL';
+  } else if (role && ['gp', 'ahp'].includes(role)) {
+    query += ' AND cp.role_in_conference = ? AND g.id IS NULL';
     params.push(role);
   }
 
@@ -306,70 +357,88 @@ const getJoinTimeReport = async (filters = {}) => {
 
   const [rows] = await pool.execute(query, params);
 
-  const formattedRows = rows.map((row) => ({
-    session_id: row.session_id,
-    conference_id: row.conference_id,
-    conference_code: row.conference_code,
-    meeting_date: row.meeting_date,
-    meeting_time: row.meeting_time,
-    patient_id: row.patient_id,
-    patient_name: row.patient_name,
-    participant_user_id: row.participant_user_id,
-    participant_name: row.participant_name,
-    participant_role: row.participant_role || 'other',
-    joined_at: row.joined_at,
-    left_at: row.left_at,
-    duration_seconds: Number(row.duration_seconds) || 0,
-    duration_label: formatDurationLabel(row.duration_seconds),
-  }));
-
-  const participantTotals = new Map();
-  const patientTotals = new Map();
-  let grandTotalSeconds = 0;
-
-  formattedRows.forEach((row) => {
-    grandTotalSeconds += row.duration_seconds;
-
-    const pKey = row.participant_user_id;
-    if (!participantTotals.has(pKey)) {
-      participantTotals.set(pKey, {
-        participant_user_id: row.participant_user_id,
-        participant_name: row.participant_name,
-        participant_role: row.participant_role,
-        total_seconds: 0,
-        session_count: 0,
-      });
-    }
-    const pEntry = participantTotals.get(pKey);
-    pEntry.total_seconds += row.duration_seconds;
-    pEntry.session_count += 1;
-
-    const patKey = row.patient_id;
-    if (!patientTotals.has(patKey)) {
-      patientTotals.set(patKey, {
+  const conferences = new Map();
+  rows.forEach((row) => {
+    const duration = Number(row.duration_seconds) || 0;
+    let conference = conferences.get(row.conference_id);
+    if (!conference) {
+      conference = {
+        conference_id: row.conference_id,
+        conference_code: row.conference_code,
+        meeting_date: row.meeting_date,
+        meeting_time: row.meeting_time,
         patient_id: row.patient_id,
         patient_name: row.patient_name,
-        total_seconds: 0,
-        session_count: 0,
-      });
+        accepted_at: row.accepted_at,
+        ended_at: row.ended_at,
+        first_joined_at: row.joined_at,
+        last_left_at: row.left_at,
+        participants: new Map(),
+      };
+      conferences.set(row.conference_id, conference);
     }
-    const patEntry = patientTotals.get(patKey);
-    patEntry.total_seconds += row.duration_seconds;
-    patEntry.session_count += 1;
+
+    if (row.joined_at && (!conference.first_joined_at || new Date(row.joined_at) < new Date(conference.first_joined_at))) {
+      conference.first_joined_at = row.joined_at;
+    }
+    if (row.left_at && (!conference.last_left_at || new Date(row.left_at) > new Date(conference.last_left_at))) {
+      conference.last_left_at = row.left_at;
+    }
+
+    const participant = conference.participants.get(row.participant_user_id);
+    if (!participant) {
+      conference.participants.set(row.participant_user_id, {
+        participant_user_id: row.participant_user_id,
+        participant_name: row.participant_name,
+        participant_role: row.participant_role || 'other',
+        duration_seconds: duration,
+      });
+      return;
+    }
+    participant.duration_seconds += duration;
   });
+
+  const secondsBetween = (start, end) => {
+    if (!start || !end) return 0;
+    return Math.max(0, Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000));
+  };
+
+  const formattedRows = [...conferences.values()].map((conference) => {
+    const startedAt = conference.accepted_at || conference.first_joined_at;
+    const endedAt = conference.ended_at || conference.last_left_at;
+    const durationSeconds = secondsBetween(startedAt, endedAt || new Date());
+    const participants = [...conference.participants.values()]
+      .map((participant) => ({
+        ...participant,
+        duration_label: formatDurationLabel(participant.duration_seconds),
+      }))
+      .sort((a, b) => b.duration_seconds - a.duration_seconds);
+
+    return {
+      id: conference.conference_id,
+      conference_id: conference.conference_id,
+      conference_code: conference.conference_code,
+      meeting_date: conference.meeting_date,
+      meeting_time: conference.meeting_time,
+      patient_id: conference.patient_id,
+      patient_name: conference.patient_name,
+      started_at: startedAt,
+      ended_at: endedAt,
+      duration_seconds: durationSeconds,
+      duration_label: formatDurationLabel(durationSeconds),
+      participant_count: participants.length,
+      participants,
+    };
+  }).sort((a, b) => String(a.meeting_time || '').localeCompare(String(b.meeting_time || '')));
+
+  const grandTotalSeconds = formattedRows.reduce((sum, row) => sum + row.duration_seconds, 0);
 
   const summary = {
     grand_total_seconds: grandTotalSeconds,
     grand_total_label: formatDurationLabel(grandTotalSeconds),
-    participant_count: participantTotals.size,
+    participant_count: formattedRows.reduce((sum, row) => sum + row.participant_count, 0),
     session_count: formattedRows.length,
-    conference_count: new Set(formattedRows.map((r) => r.conference_id)).size,
-    by_participant: [...participantTotals.values()]
-      .map((p) => ({ ...p, total_label: formatDurationLabel(p.total_seconds) }))
-      .sort((a, b) => b.total_seconds - a.total_seconds),
-    by_patient: [...patientTotals.values()]
-      .map((p) => ({ ...p, total_label: formatDurationLabel(p.total_seconds) }))
-      .sort((a, b) => b.total_seconds - a.total_seconds),
+    conference_count: formattedRows.length,
   };
 
   return {
@@ -389,8 +458,10 @@ module.exports = {
   ensureSessionsTable,
   startSession,
   endSession,
+  countOpenSessions,
   endAllSessions,
   getConferenceAttendance,
+  getConferenceParticipantOverview,
   getMonthlyJoinSummary,
   getJoinTimeReport,
   formatDurationLabel,

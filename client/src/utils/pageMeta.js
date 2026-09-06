@@ -24,7 +24,7 @@ const PAGE_META = {
     subtitle: 'Book conference appointments with patients, GPs, and multiple AHP professions',
   },
   '/join-time-report': {
-    title: 'Join Time Report',
+    title: 'Time Calculator',
     subtitle: 'Calculate participant meeting join times by date, patient, and role for salary records',
   },
   '/tasks': {
@@ -32,6 +32,14 @@ const PAGE_META = {
     subtitle: (role) => (CLINICAL_ROLES.includes(role)
       ? 'View and update tasks assigned to you'
       : 'Create, assign, and track operational and clinical tasks across staff'),
+  },
+  '/tasks?tab=inbox': {
+    title: 'Assigned to Me',
+    subtitle: 'Tasks other staff assigned to you — update progress, attach files, or manage your own items',
+  },
+  '/tasks?tab=assigned': {
+    title: 'Assigned by Me',
+    subtitle: 'Tasks you assigned to other staff — add, edit, or remove assignments',
   },
   '/notifications': {
     title: 'Notifications',
@@ -96,9 +104,11 @@ const formatPathTitle = (pathname) => {
   return segment.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
-export const getPageMeta = (pathname, role) => {
+export const getPageMeta = (pathname, role, search = '') => {
   const path = pathname.split('?')[0].replace(/\/$/, '') || '/dashboard';
-  const entry = PAGE_META[path];
+  const query = search.startsWith('?') ? search : search ? `?${search}` : '';
+  const keyed = query ? PAGE_META[`${path}${query}`] : null;
+  const entry = keyed || PAGE_META[path];
 
   if (!entry) {
     return { title: formatPathTitle(path), subtitle: null };

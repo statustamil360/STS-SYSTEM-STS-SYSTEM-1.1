@@ -12,7 +12,7 @@ Browser  →  https://your-domain.com
               ├── /api/*     → Express API
               └── /uploads/* → Profile & appointment files
                     ↓
-              MySQL (amc_teleconference)
+              MySQL (amc_asterix)
 ```
 
 Video uses **self-hosted Jitsi** (`JITSI_BASE_URL`, default `https://meet.asterixmc.com`). Install commands for the Contabo VPS: [docs/JITSI_CONTABO.md](docs/JITSI_CONTABO.md). Optional fallback: **private WebRTC** (mediasoup). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md).
@@ -83,7 +83,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_USER=amc_user
 DB_PASSWORD=STRONG_DB_PASSWORD
-DB_NAME=amc_teleconference
+DB_NAME=amc_asterix
 
 JWT_SECRET=CHANGE_TO_LONG_RANDOM_STRING_32_CHARS_MIN
 JWT_REFRESH_SECRET=CHANGE_TO_ANOTHER_LONG_RANDOM_STRING
@@ -133,9 +133,9 @@ mysql -u root -p
 ```
 
 ```sql
-CREATE DATABASE amc_teleconference CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE amc_asterix CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'amc_user'@'localhost' IDENTIFIED BY 'STRONG_DB_PASSWORD';
-GRANT ALL PRIVILEGES ON amc_teleconference.* TO 'amc_user'@'localhost';
+GRANT ALL PRIVILEGES ON amc_asterix.* TO 'amc_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 ```

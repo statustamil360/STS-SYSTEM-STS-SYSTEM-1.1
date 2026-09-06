@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Box, Typography, Stack, Button, CircularProgress } from '@mui/material';
 import { alpha } from '@mui/material/styles';
-import { AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined } from '@mui/icons-material';
+import { AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined, CallEndOutlined } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import useCountdown from '../hooks/useCountdown';
+import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
+import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { formatClockTime } from '../utils/dateTime';
 import { ROLES } from '../utils/constants';
 import api from '../services/api';
@@ -12,8 +14,11 @@ import api from '../services/api';
 const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const navigate = useNavigate();
   const countdown = useCountdown(meeting?.scheduled_date, meeting?.scheduled_time);
+  const openLeadMinutes = useConferenceOpenLeadMinutes();
+  const { can } = useReceptionistPermissions();
   const [accepting, setAccepting] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [ending, setEnding] = useState(false);
 
   if (!meeting) {
     return (
@@ -37,10 +42,19 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
 
   const isGp = userRole === ROLES.GP;
   const isAhp = userRole === ROLES.AHP;
+  const isGuest = userRole === ROLES.CONFERENCE_GUEST;
+  // Admins supervise reception, so they get the same open/end control.
+  const isMeetingHost = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(userRole);
+  const isParticipant = isGp || isAhp || isGuest;
   const isAccepted = ['waiting', 'live'].includes(meeting.status);
-  const waitingForGp = isAhp && meeting.status === 'scheduled';
-  const canAccept = isGp && meeting.status === 'scheduled';
-  const canJoin = (isGp && isAccepted) || (isAhp && isAccepted);
+  const isCompleted = ['completed', 'cancelled'].includes(meeting.status);
+  const withinAcceptWindow = countdown.diffMs <= openLeadMinutes * 60 * 1000;
+  const isPendingOpen = isMeetingHost && meeting.status === 'scheduled' && !isCompleted && can('conference_open');
+  const canAccept = isPendingOpen && withinAcceptWindow;
+  const acceptTooEarly = isPendingOpen && !withinAcceptWindow;
+  const canEnd = isMeetingHost && isAccepted && !isCompleted && can('conference_end');
+  const canJoin = isParticipant && isAccepted && !isCompleted;
+  const waitingForReception = isParticipant && meeting.status === 'scheduled';
 
   const goToRoom = (data) => {
     navigate(`/conferences/${meeting.id}/room`, {
@@ -58,12 +72,33 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
     setAccepting(true);
     try {
       await api.post(`/conferences/${meeting.id}/accept`);
-      toast.success('Meeting accepted');
+      toast.success('Meeting opened — participants can now join');
       onRefresh?.();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to accept meeting');
+      toast.error(err.response?.data?.message || 'Failed to open meeting');
     } finally {
       setAccepting(false);
+    }
+  };
+
+  const endMeeting = async (force = false) => {
+    setEnding(true);
+    try {
+      await api.post(`/conferences/${meeting.id}/end`, force ? { force: true } : {});
+      toast.success('Meeting ended — documents are being generated');
+      onRefresh?.();
+    } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.code === 'PARTICIPANTS_STILL_IN') {
+        const confirmed = window.confirm(err.response.data.message);
+        if (confirmed) {
+          await endMeeting(true);
+          return;
+        }
+      } else {
+        toast.error(err.response?.data?.message || 'Failed to end meeting');
+      }
+    } finally {
+      setEnding(false);
     }
   };
 
@@ -129,22 +164,10 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
             onClick={handleAccept}
             sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 2, bgcolor: 'common.white', color: 'success.dark', '&:hover': { bgcolor: alpha('#FFFFFF', 0.9) } }}
           >
-            Accept
+            Open
           </Button>
         )}
-        {canJoin && (
-          <Button
-            size="small"
-            variant="contained"
-            disabled={joining}
-            startIcon={joining ? <CircularProgress size={14} color="inherit" /> : <VideoCallOutlined sx={{ fontSize: 16 }} />}
-            onClick={handleJoin}
-            sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 2, bgcolor: 'common.white', color: 'primary.main', '&:hover': { bgcolor: alpha('#FFFFFF', 0.9) } }}
-          >
-            Join
-          </Button>
-        )}
-        {waitingForGp && (
+        {acceptTooEarly && (
           <Button
             size="small"
             variant="outlined"
@@ -161,7 +184,52 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
               opacity: 0.9,
             }}
           >
-            Awaiting GP
+            {openLeadMinutes > 0 ? `Opens ${openLeadMinutes} min before` : 'At assigned time'}
+          </Button>
+        )}
+        {canEnd && (
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={ending}
+            startIcon={ending ? <CircularProgress size={14} color="inherit" /> : <CallEndOutlined sx={{ fontSize: 16 }} />}
+            onClick={() => endMeeting(false)}
+            sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 2 }}
+          >
+            End
+          </Button>
+        )}
+        {canJoin && (
+          <Button
+            size="small"
+            variant="contained"
+            disabled={joining}
+            startIcon={joining ? <CircularProgress size={14} color="inherit" /> : <VideoCallOutlined sx={{ fontSize: 16 }} />}
+            onClick={handleJoin}
+            sx={{ flexShrink: 0, fontWeight: 700, borderRadius: 2, bgcolor: 'common.white', color: 'primary.main', '&:hover': { bgcolor: alpha('#FFFFFF', 0.9) } }}
+          >
+            Join
+          </Button>
+        )}
+        {waitingForReception && (
+          <Button
+            size="small"
+            variant="outlined"
+            disabled
+            sx={{
+              flexShrink: 0,
+              fontWeight: 600,
+              fontSize: '0.75rem',
+              borderRadius: 2,
+              py: 0.5,
+              px: 1.25,
+              color: 'common.white',
+              borderColor: alpha('#FFFFFF', 0.45),
+              opacity: 0.9,
+            }}
+          >
+            Awaiting reception
           </Button>
         )}
       </Stack>

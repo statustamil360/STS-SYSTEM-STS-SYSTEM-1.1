@@ -55,7 +55,11 @@ const DataTable = ({
   showRowNumbers = true,
   searchValue,
   highlightRowId = null,
+  isRowHighlighted = null,
   loadingMore = false,
+  embedded = false,
+  emptyTitle = 'No records found',
+  emptySubtitle = 'Try adjusting your search or filters',
 }) => {
   const [searchTerm, setSearchTerm] = useState(searchValue ?? '');
   const [sortField, setSortField] = useState(defaultSortField);
@@ -130,9 +134,10 @@ const DataTable = ({
       sx={{
         overflow: 'hidden',
         border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 3,
-        boxShadow: '0 4px 24px rgba(15, 23, 42, 0.06)',
+        borderColor: embedded ? alpha('#64748B', 0.16) : 'divider',
+        borderRadius: embedded ? 2.5 : 3,
+        boxShadow: embedded ? 'none' : '0 4px 24px rgba(15, 23, 42, 0.06)',
+        bgcolor: 'background.paper',
       }}
     >
       {(title || onSearch || filters.length > 0 || actionLabel || headerActions) && (
@@ -393,29 +398,36 @@ const DataTable = ({
                       <InboxOutlined sx={{ fontSize: 28 }} />
                     </Box>
                     <Typography sx={{ fontWeight: 600 }} color="text.secondary">
-                      No records found
+                      {emptyTitle}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Try adjusting your search or filters
+                    <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 420, lineHeight: 1.6 }}>
+                      {emptySubtitle}
                     </Typography>
                   </Stack>
                 </TableCell>
               </TableRow>
             ) : (
               displayRows.map((row, index) => {
-                const isHighlighted = highlightRowId != null && row.id === highlightRowId;
+                const isFocused = highlightRowId != null && row.id === highlightRowId;
+                const isUnread = Boolean(isRowHighlighted?.(row));
                 return (
                 <TableRow
                   key={row.id}
-                  ref={isHighlighted ? highlightRowRef : undefined}
+                  ref={isFocused ? highlightRowRef : undefined}
                   hover
                   sx={{
-                    bgcolor: isHighlighted
-                      ? (theme) => alpha(theme.palette.warning.main, 0.14)
-                      : index % 2 === 1 ? (theme) => alpha(theme.palette.primary.main, 0.015) : 'transparent',
-                    outline: isHighlighted ? (theme) => `2px solid ${alpha(theme.palette.warning.main, 0.55)}` : 'none',
-                    outlineOffset: -2,
-                    transition: 'background-color 120ms ease, outline 120ms ease',
+                    bgcolor: isUnread
+                      ? (theme) => alpha(theme.palette.primary.main, 0.03)
+                      : isFocused
+                        ? (theme) => alpha(theme.palette.primary.main, 0.06)
+                        : index % 2 === 1 ? (theme) => alpha(theme.palette.primary.main, 0.015) : 'transparent',
+                    boxShadow: isUnread
+                      ? (theme) => `inset 3px 0 0 ${theme.palette.primary.main}`
+                      : 'none',
+                    transition: 'background-color 120ms ease, box-shadow 120ms ease',
+                    '&:hover': {
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, isUnread ? 0.05 : 0.02),
+                    },
                     '&:last-child td': { borderBottom: 0 },
                   }}
                 >
@@ -438,17 +450,42 @@ const DataTable = ({
                       {col.render
                         ? col.render(row)
                         : col.type === 'status'
-                          ? (
-                            <Chip
-                              label={row[col.field]}
-                              size="small"
-                              color={STATUS_COLORS[row[col.field]] || 'default'}
-                              variant="outlined"
-                              sx={{ fontWeight: 600, fontSize: '0.75rem' }}
-                            />
-                          )
+                          ? (() => {
+                            const status = String(row[col.field] || '').toLowerCase();
+                            const isInactive = status === 'inactive';
+                            const isActive = status === 'active';
+                            return (
+                              <Chip
+                                label={row[col.field]}
+                                size="small"
+                                color={STATUS_COLORS[status] || 'default'}
+                                variant={isInactive || isActive ? 'filled' : 'outlined'}
+                                sx={{
+                                  fontWeight: 700,
+                                  fontSize: '0.75rem',
+                                  textTransform: 'capitalize',
+                                  ...(isActive && {
+                                    bgcolor: 'success.main',
+                                    color: 'common.white',
+                                    borderColor: 'success.main',
+                                  }),
+                                  ...(isInactive && {
+                                    bgcolor: 'error.main',
+                                    color: 'common.white',
+                                    borderColor: 'error.main',
+                                  }),
+                                }}
+                              />
+                            );
+                          })()
                           : (
-                            <Typography variant="body2" sx={{ fontWeight: isCodeField(col.field) ? 600 : 400, color: isCodeField(col.field) ? 'primary.main' : 'text.primary' }}>
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontWeight: isCodeField(col.field) ? 600 : (isUnread ? 700 : 400),
+                                color: isCodeField(col.field) ? 'primary.main' : 'text.primary',
+                              }}
+                            >
                               {row[col.field] ?? '—'}
                             </Typography>
                           )}

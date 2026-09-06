@@ -19,6 +19,7 @@ import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { formatClock } from '../../utils/dateTime';
 import { ROLES } from '../../utils/constants';
 import PageLoader from '../../components/PageLoader';
+import PasswordTextField from '../../components/PasswordReveal';
 import api from '../../services/api';
 
 const DEFAULT_EMAIL = {
@@ -379,9 +380,8 @@ const Settings = () => {
                 />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
+                <PasswordTextField
                   label="SMTP Password"
-                  type="password"
                   value={emailSettings.smtp_password}
                   onChange={(e) => setEmailSettings((p) => ({ ...p, smtp_password: e.target.value }))}
                   {...fieldProps(null)}
@@ -446,9 +446,8 @@ const Settings = () => {
                 />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
+                <PasswordTextField
                   label="API Key / Auth Token"
-                  type="password"
                   value={smsSettings.api_key}
                   onChange={(e) => setSmsSettings((p) => ({ ...p, api_key: e.target.value }))}
                   {...fieldProps(null)}
@@ -507,9 +506,8 @@ const Settings = () => {
                 />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
+                <PasswordTextField
                   label="API Key / Access Token"
-                  type="password"
                   value={whatsappSettings.api_key}
                   onChange={(e) => setWhatsappSettings((p) => ({ ...p, api_key: e.target.value }))}
                   {...fieldProps(null)}

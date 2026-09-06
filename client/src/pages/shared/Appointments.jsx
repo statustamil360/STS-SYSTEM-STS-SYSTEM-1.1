@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Dialog, DialogContent, Grid, MenuItem, Box, Typography, Stack, IconButton,
   Button, Chip, List, ListItem, ListItemText, ListItemSecondaryAction, DialogActions, Alert,
+  Autocomplete, TextField, CircularProgress, FormControlLabel, Checkbox,
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { alpha } from '@mui/material/styles';
@@ -9,11 +10,11 @@ import {
   EventOutlined, PersonOutlined, CalendarTodayOutlined, AccessTimeOutlined,
   NotesOutlined, InfoOutlined, MedicalServicesOutlined, HealthAndSafetyOutlined,
   AddOutlined, DeleteOutlined, TitleOutlined, WarningAmberOutlined, CommentOutlined,
-  DescriptionOutlined, AttachFileOutlined, VideoCallOutlined, BadgeOutlined,
-  ScheduleOutlined, EventAvailableOutlined, FolderOutlined, InsertDriveFileOutlined,
+  DescriptionOutlined, VideoCallOutlined, BadgeOutlined,
+  ScheduleOutlined, FolderOutlined, InsertDriveFileOutlined,
   CheckCircleOutlined,
 } from '@mui/icons-material';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { toast } from 'react-toastify';
 import DataTable from '../../components/DataTable';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -30,13 +31,47 @@ import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { STATUS_COLORS } from '../../utils/constants';
 import { openAppointmentFilePreview } from '../../utils/filePreview';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
+import FileDropZone from '../../components/FileDropZone';
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'cancelled'];
 const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
 
+const CANCEL_REASON_OPTIONS = [
+  { key: 'time_over', label: 'Time over the meeting' },
+  { key: 'patient_request', label: 'Patient requested cancellation' },
+  { key: 'clinician_unavailable', label: 'Clinician unavailable' },
+  { key: 'other', label: 'Other' },
+];
+
+const parseCancelledReason = (reason) => {
+  const selected = [];
+  let remaining = String(reason || '');
+  CANCEL_REASON_OPTIONS.filter((opt) => opt.key !== 'other').forEach((opt) => {
+    if (remaining.includes(opt.label)) {
+      selected.push(opt.key);
+      remaining = remaining.replace(opt.label, '');
+    }
+  });
+  remaining = remaining.replace(/Other:\s*/i, '').replace(/[;|,]+/g, ' ').trim();
+  if (remaining) {
+    selected.push('other');
+  }
+  return { selected, other: remaining };
+};
+
+const buildCancelledReason = (selected, otherText) => {
+  const parts = CANCEL_REASON_OPTIONS
+    .filter((opt) => opt.key !== 'other' && selected.includes(opt.key))
+    .map((opt) => opt.label);
+  if (selected.includes('other')) {
+    const extra = otherText.trim();
+    parts.push(extra ? `Other: ${extra}` : 'Other');
+  }
+  return parts.join('; ').slice(0, 255);
+};
+
 const defaultFormValues = {
   patient_id: '',
-  gp_id: '',
   title: '',
   important_note: '',
   comments: '',
@@ -127,27 +162,91 @@ const NotePanel = ({ icon: Icon, label, value, tone = 'primary' }) => (
   </Grid>
 );
 
-const HeroStat = ({ icon: Icon, label, value }) => (
+const ViewTopicCard = ({ tone = 'primary', icon: Icon, title, hint, children }) => (
+  <Box
+    sx={{
+      mb: 2.5,
+      height: '100%',
+      borderRadius: 2.5,
+      overflow: 'hidden',
+      border: '1px solid',
+      borderColor: (theme) => alpha(theme.palette[tone].main, 0.22),
+      bgcolor: 'background.paper',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+    }}
+  >
+    <Box
+      sx={{
+        px: { xs: 2, sm: 2.5 },
+        py: 1.75,
+        background: (theme) => `linear-gradient(135deg, ${alpha(theme.palette[tone].main, 0.18)} 0%, ${alpha(theme.palette[tone].main, 0.05)} 100%)`,
+        borderBottom: '1px solid',
+        borderColor: (theme) => alpha(theme.palette[tone].main, 0.16),
+      }}
+    >
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            flexShrink: 0,
+            borderRadius: 1.5,
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: `${tone}.main`,
+            color: 'common.white',
+          }}
+        >
+          <Icon sx={{ fontSize: 20 }} />
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            variant="h6"
+            sx={{ fontWeight: 800, fontSize: '1.05rem', lineHeight: 1.25, color: `${tone}.dark` }}
+          >
+            {title}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {hint}
+          </Typography>
+        </Box>
+      </Stack>
+    </Box>
+    <Box sx={{ p: { xs: 2, sm: 2.5 } }}>
+      <Grid container spacing={2.5}>{children}</Grid>
+    </Box>
+  </Box>
+);
+
+const InfoTile = ({ icon: Icon, label, value, mono = false }) => (
   <Box
     sx={{
       px: 1.75,
       py: 1.5,
-      borderRadius: '12px',
-      bgcolor: alpha('#FFFFFF', 0.14),
+      height: '100%',
+      borderRadius: 2,
       border: '1px solid',
-      borderColor: alpha('#FFFFFF', 0.18),
+      borderColor: (theme) => alpha(theme.palette.divider, 0.95),
+      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.03),
     }}
   >
     <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', mb: 0.5 }}>
-      <Icon sx={{ fontSize: 15, opacity: 0.85 }} />
+      <Icon sx={{ fontSize: 15, color: 'primary.main' }} />
       <Typography
         variant="caption"
-        sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.85 }}
+        sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'text.secondary' }}
       >
         {label}
       </Typography>
     </Stack>
-    <Typography variant="subtitle2" sx={{ fontWeight: 700, wordBreak: 'break-word' }}>
+    <Typography
+      variant="subtitle2"
+      sx={{
+        fontWeight: 700,
+        wordBreak: 'break-word',
+        ...(mono && { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }),
+      }}
+    >
       {value || '—'}
     </Typography>
   </Box>
@@ -160,34 +259,170 @@ const getFirstFormError = (formErrors) => {
   return 'Please complete all required fields';
 };
 
+const emptyGpRow = () => ({ key: Date.now() + Math.random(), gp_id: '' });
+
 const emptyAhpRow = () => ({ key: Date.now() + Math.random(), profession: '', ahp_id: '' });
+
+const validateGpRows = (rows) => {
+  const selected = rows.filter((r) => r.gp_id);
+  if (!selected.length) return 'Assign at least one GP';
+  const ids = selected.map((r) => String(r.gp_id));
+  if (new Set(ids).size !== ids.length) return 'The same GP cannot be added twice in one appointment';
+  return null;
+};
 
 const validateAhpRows = (rows) => {
   const complete = rows.filter((r) => r.profession && r.ahp_id);
   if (!complete.length) return 'Add at least one profession and AHP assignment';
-  const keys = complete.map((r) => `${r.profession.trim().toLowerCase()}::${r.ahp_id}`);
-  if (new Set(keys).size !== keys.length) {
-    return 'The same profession and AHP cannot be added twice in one appointment';
+  const ahpIds = complete.map((r) => String(r.ahp_id));
+  if (new Set(ahpIds).size !== ahpIds.length) {
+    return 'The same AHP cannot be added twice in one appointment';
   }
   return null;
+};
+
+const patientDisplayName = (patient) => (
+  patient?.full_name
+  || `${patient?.first_name || ''} ${patient?.last_name || ''}`.trim()
+  || '—'
+);
+
+const PatientSearchField = ({
+  control,
+  error,
+  helperText,
+  selectedPatient,
+  onSelectedPatient,
+}) => {
+  const [inputValue, setInputValue] = useState('');
+  const [options, setOptions] = useState(selectedPatient ? [selectedPatient] : []);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const query = inputValue.trim();
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (query.length < 1) {
+        setOptions(selectedPatient ? [selectedPatient] : []);
+        return;
+      }
+      setLoading(true);
+      try {
+        const { data } = await api.get('/patients', { params: { search: query, limit: 25 } });
+        if (cancelled) return;
+        const rows = data.data ?? [];
+        if (selectedPatient && !rows.some((row) => String(row.id) === String(selectedPatient.id))) {
+          setOptions([selectedPatient, ...rows]);
+        } else {
+          setOptions(rows);
+        }
+      } catch {
+        if (!cancelled) setOptions(selectedPatient ? [selectedPatient] : []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [inputValue, selectedPatient]);
+
+  return (
+    <Controller
+      name="patient_id"
+      control={control}
+      rules={{ required: 'Patient is required' }}
+      render={({ field }) => {
+        const value = options.find((row) => String(row.id) === String(field.value))
+          || (selectedPatient && String(selectedPatient.id) === String(field.value) ? selectedPatient : null);
+        return (
+          <Autocomplete
+            options={options}
+            value={value}
+            inputValue={inputValue}
+            loading={loading}
+            autoComplete
+            includeInputInList
+            filterOptions={(items) => items}
+            noOptionsText={
+              loading
+                ? 'Searching patients...'
+                : (inputValue.trim() ? 'No matching patients' : 'Type a letter to search patients')
+            }
+            getOptionLabel={(option) => {
+              if (!option || typeof option === 'string') return option || '';
+              const name = patientDisplayName(option);
+              return option.patient_code ? `${name} · ${option.patient_code}` : name;
+            }}
+            isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
+            onChange={(_, patient) => {
+              field.onChange(patient ? String(patient.id) : '');
+              onSelectedPatient(patient || null);
+              if (patient) setInputValue(patientDisplayName(patient));
+            }}
+            onInputChange={(_, next, reason) => {
+              if (reason === 'reset') return;
+              setInputValue(next);
+              if (reason === 'clear' || next === '') {
+                field.onChange('');
+                onSelectedPatient(null);
+              }
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Search Patient"
+                placeholder="Type a letter — name, patient ID, or phone"
+                error={error}
+                helperText={helperText}
+                sx={fieldSx}
+                InputLabelProps={{ shrink: true, ...params.InputLabelProps }}
+                InputProps={{
+                  ...params.InputProps,
+                  startAdornment: (
+                    <>
+                      <PersonOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85, mr: 0.5 }} />
+                      {params.InputProps?.startAdornment}
+                    </>
+                  ),
+                  endAdornment: (
+                    <>
+                      {loading ? <CircularProgress color="inherit" size={16} /> : null}
+                      {params.InputProps?.endAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
+          />
+        );
+      }}
+    />
+  );
 };
 
 const Appointments = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const highlightHandledRef = useRef(false);
-  const { canEdit, canDelete } = useRolePermissions();
-  const [patients, setPatients] = useState([]);
+  const { canCreate, canEdit, canDelete } = useRolePermissions('appointments');
   const [gps, setGps] = useState([]);
   const [ahps, setAhps] = useState([]);
   const [professions, setProfessions] = useState([]);
+  const [assigners, setAssigners] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [dateScopeFilter, setDateScopeFilter] = useState('');
+  const [gpFilter, setGpFilter] = useState('');
+  const [assignedByFilter, setAssignedByFilter] = useState('');
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [gpRows, setGpRows] = useState([emptyGpRow()]);
   const [ahpRows, setAhpRows] = useState([emptyAhpRow()]);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [existingFiles, setExistingFiles] = useState([]);
@@ -196,10 +431,13 @@ const Appointments = () => {
   const [viewData, setViewData] = useState(null);
   const [highlightAppointmentId, setHighlightAppointmentId] = useState(null);
   const [highlightLabel, setHighlightLabel] = useState('');
+  const [cancelReasons, setCancelReasons] = useState([]);
+  const [cancelOtherText, setCancelOtherText] = useState('');
 
-  const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
+  const { register, handleSubmit, reset, control, watch, formState: { errors } } = useForm({
     defaultValues: defaultFormValues,
   });
+  const statusValue = watch('status');
 
   const fetchAppointments = useCallback(async ({ page: pageNum, limit }) => {
     const { data } = await api.get('/appointments', {
@@ -207,12 +445,16 @@ const Appointments = () => {
         scope: 'records',
         search: search || undefined,
         status: statusFilter || undefined,
+        date_scope: dateScopeFilter || undefined,
+        gp_id: gpFilter || undefined,
+        assigned_by: assignedByFilter || undefined,
         page: pageNum,
         limit,
       },
     });
+    if (Array.isArray(data.assigners)) setAssigners(data.assigners);
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [search, statusFilter]);
+  }, [search, statusFilter, dateScopeFilter, gpFilter, assignedByFilter]);
 
   const {
     rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
@@ -220,13 +462,11 @@ const Appointments = () => {
 
   const loadFormOptions = useCallback(async () => {
     try {
-      const [patientsRes, gpsRes, ahpsRes, professionsRes] = await Promise.all([
-        api.get('/patients', { params: { limit: 500 } }),
+      const [gpsRes, ahpsRes, professionsRes] = await Promise.all([
         api.get('/staff/gps', { params: { limit: 500, status: 'active' } }),
         api.get('/staff/ahps', { params: { limit: 500, status: 'active' } }),
         api.get('/preferences/ahp-professions'),
       ]);
-      setPatients(patientsRes.data.data ?? []);
       setGps(gpsRes.data.data ?? []);
       setAhps(ahpsRes.data.data ?? []);
       setProfessions(professionsRes.data.data ?? []);
@@ -277,11 +517,6 @@ const Appointments = () => {
     label: `${g.first_name || ''} ${g.last_name || ''}`.trim() || g.gp_code,
   })), [gps]);
 
-  const patientOptions = useMemo(() => patients.map((p) => ({
-    value: String(p.id),
-    label: p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim(),
-  })), [patients]);
-
   const professionOptions = useMemo(() => {
     const fromPrefs = professions.map((p) => p.name);
     const fromAhps = ahps.map((a) => a.profession).filter(Boolean);
@@ -298,7 +533,11 @@ const Appointments = () => {
     setSelectedFiles([]);
     setExistingFiles([]);
     reset(defaultFormValues);
+    setGpRows([emptyGpRow()]);
     setAhpRows([emptyAhpRow()]);
+    setSelectedPatient(null);
+    setCancelReasons([]);
+    setCancelOtherText('');
   };
 
   const handleOpen = async (row = null) => {
@@ -312,7 +551,6 @@ const Appointments = () => {
         const appt = data.data;
         reset({
           patient_id: appt.patient_id != null ? String(appt.patient_id) : '',
-          gp_id: appt.gp_id != null ? String(appt.gp_id) : '',
           title: appt.title || '',
           important_note: appt.important_note || '',
           comments: appt.comments || '',
@@ -322,6 +560,14 @@ const Appointments = () => {
           notes: appt.notes || '',
           status: appt.status || 'scheduled',
         });
+        setGpRows(
+          appt.gp_ids?.length
+            ? appt.gp_ids.map((gpId) => ({
+              key: `gp-${gpId}`,
+              gp_id: String(gpId),
+            }))
+            : [emptyGpRow()]
+        );
         setAhpRows(
           appt.ahp_assignments?.length
             ? appt.ahp_assignments.map((a) => ({
@@ -332,15 +578,37 @@ const Appointments = () => {
             : [emptyAhpRow()]
         );
         setExistingFiles(appt.files || []);
+        setSelectedPatient({
+          id: appt.patient_id,
+          patient_code: appt.patient_code,
+          full_name: appt.patient_name,
+        });
+        const parsed = parseCancelledReason(appt.cancelled_reason);
+        setCancelReasons(parsed.selected);
+        setCancelOtherText(parsed.other);
       } catch {
         toast.error('Failed to load appointment details');
         return;
       }
     } else {
       reset(defaultFormValues);
+      setGpRows([emptyGpRow()]);
       setAhpRows([emptyAhpRow()]);
+      setSelectedPatient(null);
+      setCancelReasons([]);
+      setCancelOtherText('');
     }
     setOpen(true);
+  };
+
+  const updateGpRow = (key, value) => {
+    setGpRows((prev) => prev.map((row) => (row.key === key ? { ...row, gp_id: value } : row)));
+  };
+
+  const addGpRow = () => setGpRows((prev) => [...prev, emptyGpRow()]);
+
+  const removeGpRow = (key) => {
+    setGpRows((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.key !== key)));
   };
 
   const updateAhpRow = (key, field, value) => {
@@ -362,21 +630,45 @@ const Appointments = () => {
   };
 
   const onSubmit = async (formData) => {
+    const gpError = validateGpRows(gpRows);
+    if (gpError) {
+      toast.error(gpError);
+      return;
+    }
+
     const ahpError = validateAhpRows(ahpRows);
     if (ahpError) {
       toast.error(ahpError);
       return;
     }
 
+    if (editRow && (formData.status || editRow.status) === 'cancelled') {
+      if (!cancelReasons.length) {
+        toast.error('Select a cancellation reason');
+        return;
+      }
+      if (cancelReasons.includes('other') && !cancelOtherText.trim()) {
+        toast.error('Enter the other cancellation reason');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
+      const gpIds = [...new Set(gpRows.filter((r) => r.gp_id).map((r) => Number(r.gp_id)))];
       const assignments = ahpRows
         .filter((r) => r.profession && r.ahp_id)
         .map((r) => ({ profession: r.profession, ahp_id: Number(r.ahp_id) }));
 
+      const patientId = Number(formData.patient_id || selectedPatient?.id);
+      if (!patientId) {
+        toast.error('Patient is required');
+        return;
+      }
+
       const body = {
-        patient_id: Number(formData.patient_id),
-        gp_id: Number(formData.gp_id),
+        patient_id: patientId,
+        gp_ids: gpIds,
         title: formData.title?.trim(),
         important_note: formData.important_note || '',
         comments: formData.comments || '',
@@ -389,12 +681,26 @@ const Appointments = () => {
 
       if (editRow) {
         body.status = formData.status || editRow.status;
+        if (body.status === 'cancelled') {
+          if (!cancelReasons.length) {
+            toast.error('Select a cancellation reason');
+            return;
+          }
+          if (cancelReasons.includes('other') && !cancelOtherText.trim()) {
+            toast.error('Enter the other cancellation reason');
+            return;
+          }
+          body.cancelled_reason = buildCancelledReason(cancelReasons, cancelOtherText);
+        } else {
+          body.cancelled_reason = '';
+        }
       }
 
       if (selectedFiles.length > 0) {
         const payload = new FormData();
         Object.entries(body).forEach(([key, val]) => {
-          payload.append(key, key === 'ahp_assignments' ? JSON.stringify(val) : String(val ?? ''));
+          const isList = key === 'ahp_assignments' || key === 'gp_ids';
+          payload.append(key, isList ? JSON.stringify(val) : String(val ?? ''));
         });
         selectedFiles.forEach((file) => payload.append('files', file));
         if (editRow) {
@@ -471,15 +777,28 @@ const Appointments = () => {
   const columns = [
     { field: 'appointment_code', headerName: 'ID', render: (r) => r.appointment_code || `#${r.id}` },
     { field: 'patient_name', headerName: 'Patient' },
-    { field: 'title', headerName: 'Title', render: (r) => r.title || '—' },
     { field: 'appointment_date', headerName: 'Date', render: (r) => formatCalendarDate(r.appointment_date) },
     { field: 'appointment_time', headerName: 'Time', render: (r) => formatClockTime(r.appointment_time) },
-    { field: 'gp_name', headerName: 'GP', render: (r) => r.gp_name || '—' },
-    { field: 'ahp_summary', headerName: 'AHPs', render: (r) => r.ahp_summary || '—' },
+    { field: 'gp_summary', headerName: 'GPs', render: (r) => r.gp_summary || r.gp_name || '—' },
+    { field: 'assigned_by_name', headerName: 'Assigned By', render: (r) => r.assigned_by_name || '—' },
     { field: 'status', headerName: 'Status', type: 'status' },
   ];
 
   const appointmentFilters = [
+    {
+      key: 'date_scope',
+      label: 'Date',
+      value: dateScopeFilter,
+      onChange: (v) => { setDateScopeFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All' },
+        { value: 'today', label: 'Today' },
+        { value: 'tomorrow', label: 'Tomorrow' },
+        { value: 'week', label: 'Week' },
+        { value: 'month', label: 'Month' },
+        { value: 'year', label: 'Year' },
+      ],
+    },
     {
       key: 'status',
       label: 'Status',
@@ -488,6 +807,26 @@ const Appointments = () => {
       options: [
         { value: '', label: 'All Statuses' },
         ...APPOINTMENT_STATUS.map((s) => ({ value: s, label: formatLabel(s) })),
+      ],
+    },
+    {
+      key: 'gp',
+      label: 'GP',
+      value: gpFilter,
+      onChange: (v) => { setGpFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All GPs' },
+        ...gpOptions.map((opt) => ({ value: opt.value, label: opt.label })),
+      ],
+    },
+    {
+      key: 'assigned_by',
+      label: 'Assigned By',
+      value: assignedByFilter,
+      onChange: (v) => { setAssignedByFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All Assigned By' },
+        ...assigners.map((user) => ({ value: String(user.id), label: user.name || `User ${user.id}` })),
       ],
     },
   ];
@@ -521,10 +860,10 @@ const Appointments = () => {
           if (highlightAppointmentId) setHighlightAppointmentId(null);
         }}
         searchValue={search}
-        searchPlaceholder="Search by patient, title, ID, or notes..."
+        searchPlaceholder="Search by patient, ID, or notes..."
         filters={appointmentFilters}
-        actionLabel="Book Appointment"
-        onAction={() => handleOpen()}
+        actionLabel={canCreate ? 'Book Appointment' : undefined}
+        onAction={canCreate ? () => handleOpen() : undefined}
         onView={handleView}
         onEdit={canEdit ? handleOpen : undefined}
         onDelete={canDelete ? handleDelete : undefined}
@@ -550,50 +889,117 @@ const Appointments = () => {
         <Box
           key={editRow?.id ?? 'new'}
           component="form"
+          noValidate
           onSubmit={handleSubmit(onSubmit, onInvalid)}
           sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         >
           <DialogContent dividers sx={dialogContentSx}>
-            <SectionCard title="Participants" icon={PersonOutlined}>
+            <SectionCard title="Patient" icon={PersonOutlined}>
               <Grid size={{ xs: 12 }}>
-                <IconField
-                  label="Patient"
-                  name="patient_id"
-                  select
-                  control={control}
-                  registerOptions={{ required: 'Patient is required' }}
-                  icon={PersonOutlined}
-                  showSelectPlaceholder
-                  required
-                  error={!!errors.patient_id}
-                  helperText={errors.patient_id?.message}
-                  options={patientOptions}
-                />
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={1.5}
+                  sx={{ alignItems: { xs: 'stretch', sm: 'flex-start' } }}
+                >
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <PatientSearchField
+                      control={control}
+                      error={!!errors.patient_id}
+                      helperText={errors.patient_id?.message}
+                      selectedPatient={selectedPatient}
+                      onSelectedPatient={setSelectedPatient}
+                    />
+                  </Box>
+                  <Box
+                    sx={{
+                      width: { xs: '100%', sm: 210 },
+                      height: 44,
+                      minHeight: 44,
+                      maxHeight: 44,
+                      px: 2,
+                      flexShrink: 0,
+                      borderRadius: '9999px',
+                      border: '1px solid',
+                      borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.05),
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1,
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'text.secondary' }}>
+                      Patient ID
+                    </Typography>
+                    <Typography variant="body2" noWrap sx={{ fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      {selectedPatient?.patient_code || '—'}
+                    </Typography>
+                  </Box>
+                </Stack>
               </Grid>
-              <Grid size={{ xs: 12 }}>
-                <IconField
-                  label="General Practitioner (GP)"
-                  name="gp_id"
-                  select
-                  control={control}
-                  registerOptions={{ required: 'GP is required' }}
-                  icon={MedicalServicesOutlined}
-                  showSelectPlaceholder
-                  required
-                  error={!!errors.gp_id}
-                  helperText={errors.gp_id?.message}
-                  options={gpOptions}
-                />
-              </Grid>
+            </SectionCard>
+
+            <SectionCard title="General Practitioners (GP)" icon={MedicalServicesOutlined}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, gridColumn: '1 / -1' }}>
+                Assign any number of GPs to this appointment. Click + to add another GP. The same GP
+                cannot be added twice.
+              </Typography>
+              {gpRows.map((row, index) => (
+                <Grid size={{ xs: 12 }} key={row.key}>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'flex-start' } }}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <IconField
+                        label={`General Practitioner ${index + 1}`}
+                        select
+                        icon={MedicalServicesOutlined}
+                        value={row.gp_id !== '' && row.gp_id != null ? String(row.gp_id) : ''}
+                        onChange={(value) => updateGpRow(row.key, value?.target?.value ?? value)}
+                        showSelectPlaceholder
+                        required={index === 0}
+                        helperText={!gpOptions.length ? 'No active GP found' : undefined}
+                        options={gpOptions.filter((opt) => (
+                          opt.value === String(row.gp_id)
+                          || !gpRows.some((other) => other.key !== row.key && String(other.gp_id) === opt.value)
+                        ))}
+                      />
+                    </Box>
+                    <Stack direction="row" spacing={0.5} sx={{ pt: { sm: 0.5 }, flexShrink: 0 }}>
+                      <IconButton
+                        color="primary"
+                        onClick={addGpRow}
+                        aria-label="Add another GP"
+                        sx={{
+                          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                          '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.15) },
+                        }}
+                      >
+                        <AddOutlined fontSize="small" />
+                      </IconButton>
+                      {gpRows.length > 1 && (
+                        <IconButton
+                          color="error"
+                          onClick={() => removeGpRow(row.key)}
+                          aria-label="Remove GP row"
+                        >
+                          <DeleteOutlined fontSize="small" />
+                        </IconButton>
+                      )}
+                    </Stack>
+                  </Stack>
+                </Grid>
+              ))}
             </SectionCard>
 
             <SectionCard title="Allied Health Professionals (AHP)" icon={HealthAndSafetyOutlined}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2, gridColumn: '1 / -1' }}>
                 Select a profession, then choose an AHP. Click + to add another profession and AHP.
-                The same profession and AHP cannot be added twice.
+                The same AHP cannot be added twice.
               </Typography>
               {ahpRows.map((row, index) => {
-                const ahpOptions = getAhpsForProfession(row.profession);
+                const ahpOptions = getAhpsForProfession(row.profession).filter((ahp) => (
+                  String(ahp.id) === String(row.ahp_id)
+                  || !ahpRows.some((other) => other.key !== row.key && String(other.ahp_id) === String(ahp.id))
+                ));
                 return (
                   <Grid size={{ xs: 12 }} key={row.key}>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'flex-start' } }}>
@@ -603,7 +1009,7 @@ const Appointments = () => {
                           select
                           icon={HealthAndSafetyOutlined}
                           value={row.profession ?? ''}
-                          onChange={(e) => updateAhpRow(row.key, 'profession', e.target.value)}
+                          onChange={(value) => updateAhpRow(row.key, 'profession', value?.target?.value ?? value)}
                           showSelectPlaceholder
                           helperText={!professionOptions.length ? 'Add professions in Preferences first' : undefined}
                           options={professionOptions.map((p) => ({ value: p, label: p }))}
@@ -615,7 +1021,7 @@ const Appointments = () => {
                           select
                           icon={PersonOutlined}
                           value={row.ahp_id !== '' && row.ahp_id != null ? String(row.ahp_id) : ''}
-                          onChange={(e) => updateAhpRow(row.key, 'ahp_id', e.target.value)}
+                          onChange={(value) => updateAhpRow(row.key, 'ahp_id', value?.target?.value ?? value)}
                           showSelectPlaceholder
                           disabled={!row.profession}
                           helperText={
@@ -660,7 +1066,7 @@ const Appointments = () => {
             </SectionCard>
 
             <SectionCard title="Conference Details" icon={EventOutlined}>
-              <Grid size={{ xs: 12 }}>
+              <Grid size={{ xs: 12, sm: 6 }}>
                 <IconField
                   label="Title"
                   name="title"
@@ -672,12 +1078,10 @@ const Appointments = () => {
                   helperText={errors.title?.message}
                 />
               </Grid>
-              <Grid size={{ xs: 12 }}>
+              <Grid size={{ xs: 12, sm: 6 }}>
                 <IconField
                   label="Important Note"
                   name="important_note"
-                  multiline
-                  rows={2}
                   icon={WarningAmberOutlined}
                   register={register}
                 />
@@ -723,61 +1127,32 @@ const Appointments = () => {
             </SectionCard>
 
             <SectionCard title="More Details — Patient Previous Records" icon={DescriptionOutlined}>
-              <Grid size={{ xs: 12 }}>
-                <IconField
-                  label="Previous Records (Text)"
-                  name="patient_previous_records"
-                  multiline
-                  rows={4}
-                  icon={DescriptionOutlined}
-                  register={register}
-                />
+              <Grid size={{ xs: 12, md: 6 }}>
+                <Stack spacing={2}>
+                  <IconField
+                    label="Previous Records (Text)"
+                    name="patient_previous_records"
+                    multiline
+                    rows={4}
+                    icon={DescriptionOutlined}
+                    register={register}
+                  />
+                  <IconField
+                    label="Internal Notes"
+                    name="notes"
+                    multiline
+                    rows={4}
+                    icon={NotesOutlined}
+                    register={register}
+                  />
+                </Stack>
               </Grid>
-              <Grid size={{ xs: 12 }}>
-                <Box
-                  sx={{
-                    p: 2,
-                    borderRadius: 2.5,
-                    border: '1px dashed',
-                    borderColor: 'divider',
-                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.02),
-                  }}
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FileDropZone
+                  selectedFiles={selectedFiles}
+                  onAddFiles={(files) => setSelectedFiles((prev) => [...prev, ...files])}
+                  onRemoveSelected={(idx) => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
                 >
-                  <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.5 }}>
-                    <AttachFileOutlined sx={{ color: 'primary.main', fontSize: 20 }} />
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                      Attach Files
-                    </Typography>
-                  </Stack>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
-                    PDF, Word, Excel, reports, images, and other document formats (max 10MB each)
-                  </Typography>
-                  <Button variant="outlined" component="label" size="small" sx={{ borderRadius: 2 }}>
-                    Choose Files
-                    <input
-                      hidden
-                      multiple
-                      type="file"
-                      accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.zip,.rar,.7z"
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
-                        setSelectedFiles((prev) => [...prev, ...files]);
-                        e.target.value = '';
-                      }}
-                    />
-                  </Button>
-                  {selectedFiles.length > 0 && (
-                    <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 1.5 }}>
-                      {selectedFiles.map((file, idx) => (
-                        <Chip
-                          key={`${file.name}-${idx}`}
-                          label={file.name}
-                          size="small"
-                          onDelete={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                        />
-                      ))}
-                    </Stack>
-                  )}
                   {existingFiles.length > 0 && (
                     <List dense sx={{ mt: 1.5, bgcolor: 'background.paper', borderRadius: 2 }}>
                       {existingFiles.map((file) => (
@@ -807,17 +1182,7 @@ const Appointments = () => {
                       ))}
                     </List>
                   )}
-                </Box>
-              </Grid>
-              <Grid size={{ xs: 12 }}>
-                <IconField
-                  label="Internal Notes"
-                  name="notes"
-                  multiline
-                  rows={2}
-                  icon={NotesOutlined}
-                  register={register}
-                />
+                </FileDropZone>
               </Grid>
               {editRow && (
                 <Grid size={{ xs: 12 }}>
@@ -833,6 +1198,57 @@ const Appointments = () => {
                       <MenuItem key={s} value={s}>{formatLabel(s)}</MenuItem>
                     ))}
                   </IconField>
+                  {statusValue === 'cancelled' && (
+                    <Box
+                      sx={{
+                        mt: 1.5,
+                        p: 1.5,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: (theme) => alpha(theme.palette.error.main, 0.22),
+                        bgcolor: (theme) => alpha(theme.palette.error.main, 0.04),
+                      }}
+                    >
+                      <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 1 }}>
+                        Cancellation reason
+                      </Typography>
+                      <Stack>
+                        {CANCEL_REASON_OPTIONS.map((opt) => (
+                          <FormControlLabel
+                            key={opt.key}
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={cancelReasons.includes(opt.key)}
+                                onChange={(e) => {
+                                  setCancelReasons((prev) => (
+                                    e.target.checked
+                                      ? [...prev, opt.key]
+                                      : prev.filter((key) => key !== opt.key)
+                                  ));
+                                  if (!e.target.checked && opt.key === 'other') setCancelOtherText('');
+                                }}
+                              />
+                            }
+                            label={<Typography variant="body2">{opt.label}</Typography>}
+                          />
+                        ))}
+                      </Stack>
+                      {cancelReasons.includes('other') && (
+                        <TextField
+                          fullWidth
+                          multiline
+                          minRows={2}
+                          size="small"
+                          label="Other reason"
+                          placeholder="Type why this appointment was cancelled"
+                          value={cancelOtherText}
+                          onChange={(e) => setCancelOtherText(e.target.value)}
+                          sx={{ mt: 1, ...fieldSx }}
+                        />
+                      )}
+                    </Box>
+                  )}
                 </Grid>
               )}
             </SectionCard>
@@ -865,7 +1281,7 @@ const Appointments = () => {
         <PremiumDialogHeader
           icon={EventOutlined}
           title="Appointment & Conference Details"
-          subtitle="Full schedule and linked teleconference information"
+          subtitle="Patient, care team, schedule, and linked teleconference"
         />
         <DialogContent dividers sx={dialogContentSx}>
           {viewLoading ? (
@@ -874,43 +1290,31 @@ const Appointments = () => {
             <>
               <Box
                 sx={{
-                  position: 'relative',
-                  overflow: 'hidden',
                   mb: 2.5,
-                  p: { xs: 2.5, sm: 3 },
+                  p: { xs: 2, sm: 2.5 },
                   borderRadius: 2.5,
-                  color: 'common.white',
-                  background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 58%, ${theme.palette.primary.light} 100%)`,
-                  boxShadow: '0 14px 34px rgba(15, 23, 42, 0.22)',
-                  '&::after': {
-                    content: '""',
-                    position: 'absolute',
-                    top: -60,
-                    right: -40,
-                    width: 190,
-                    height: 190,
-                    borderRadius: '50%',
-                    bgcolor: alpha('#FFFFFF', 0.06),
-                  },
+                  border: '1px solid',
+                  borderColor: (theme) => alpha(theme.palette.primary.main, 0.16),
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
                 }}
               >
                 <Stack
                   direction={{ xs: 'column', sm: 'row' }}
                   spacing={1.5}
-                  sx={{ position: 'relative', justifyContent: 'space-between', alignItems: { sm: 'flex-start' } }}
+                  sx={{ justifyContent: 'space-between', alignItems: { sm: 'flex-start' } }}
                 >
                   <Box sx={{ minWidth: 0 }}>
                     <Typography
                       variant="caption"
-                      sx={{ fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.8 }}
+                      sx={{ fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'text.secondary' }}
                     >
-                      Appointment ID
+                      Appointment
                     </Typography>
                     <Typography
-                      variant="h4"
+                      variant="h5"
                       sx={{
                         fontWeight: 800,
-                        lineHeight: 1.15,
+                        lineHeight: 1.2,
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                         letterSpacing: '0.02em',
                         wordBreak: 'break-word',
@@ -919,7 +1323,7 @@ const Appointments = () => {
                       {viewData.appointment_code || `#${viewData.id}`}
                     </Typography>
                     {viewData.title && (
-                      <Typography variant="body2" sx={{ mt: 0.75, opacity: 0.9 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                         {viewData.title}
                       </Typography>
                     )}
@@ -930,60 +1334,136 @@ const Appointments = () => {
                     sx={{ fontWeight: 700, flexShrink: 0 }}
                   />
                 </Stack>
-
                 <Box
                   sx={{
-                    position: 'relative',
-                    mt: 2.5,
+                    mt: 2,
                     display: 'grid',
                     gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
-                    gap: 1.5,
+                    gap: 1.25,
                   }}
                 >
-                  <HeroStat
+                  <InfoTile
                     icon={CalendarTodayOutlined}
                     label="Date"
                     value={formatCalendarDate(viewData.appointment_date)}
                   />
-                  <HeroStat
+                  <InfoTile
                     icon={ScheduleOutlined}
                     label="Time"
                     value={formatClockTime(viewData.appointment_time)}
                   />
-                  <HeroStat
+                  <InfoTile
                     icon={BadgeOutlined}
                     label="Patient ID"
                     value={viewData.patient_code}
+                    mono
                   />
                 </Box>
               </Box>
 
-              <SectionCard title="Patient & Care Team" icon={PersonOutlined}>
-                <DetailItem icon={PersonOutlined} label="Patient" value={viewData.patient_name} />
-                <DetailItem icon={BadgeOutlined} label="Patient ID" value={viewData.patient_code} mono />
-                <DetailItem icon={MedicalServicesOutlined} label="General Practitioner" value={viewData.gp_name} />
-                <DetailItem icon={BadgeOutlined} label="GP ID" value={viewData.gp_code} mono />
-                <DetailItem
-                  icon={HealthAndSafetyOutlined}
-                  label="AHP Assignments"
-                  value={viewData.ahp_summary}
-                  span={12}
-                />
-              </SectionCard>
+              <Grid container spacing={2} sx={{ mb: 0.5 }}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <ViewTopicCard
+                    tone="primary"
+                    icon={PersonOutlined}
+                    title="Registered Patient"
+                    hint="Who this appointment is booked for"
+                  >
+                    <DetailItem icon={PersonOutlined} label="Full Name" value={viewData.patient_name} span={12} />
+                    <DetailItem icon={BadgeOutlined} label="Record ID" value={viewData.patient_code} span={12} mono />
+                  </ViewTopicCard>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <ViewTopicCard
+                    tone="secondary"
+                    icon={MedicalServicesOutlined}
+                    title="Assigned Clinicians"
+                    hint="GP and allied health booked for this visit"
+                  >
+                    <DetailItem
+                      icon={MedicalServicesOutlined}
+                      label="General Practitioners"
+                      value={viewData.gp_summary || viewData.gp_name}
+                      span={12}
+                    />
+                    <DetailItem
+                      icon={HealthAndSafetyOutlined}
+                      label="Allied Health"
+                      value={viewData.ahp_summary}
+                      span={12}
+                    />
+                  </ViewTopicCard>
+                </Grid>
+              </Grid>
 
-              <SectionCard title="Schedule" icon={EventAvailableOutlined}>
-                <DetailItem
-                  icon={CalendarTodayOutlined}
-                  label="Date"
-                  value={formatCalendarDate(viewData.appointment_date)}
-                />
-                <DetailItem
-                  icon={ScheduleOutlined}
-                  label="Time"
-                  value={formatClockTime(viewData.appointment_time)}
-                />
-                <DetailItem icon={TitleOutlined} label="Title" value={viewData.title} />
-                <DetailItem icon={InfoOutlined} label="Status" value={formatLabel(viewData.status)} />
+              <ViewTopicCard
+                tone="info"
+                icon={VideoCallOutlined}
+                title="Teleconference Session"
+                hint="Meeting created from this appointment"
+              >
+                {viewData.conference ? (
+                  <>
+                    <DetailItem
+                      icon={VideoCallOutlined}
+                      label="Conference ID"
+                      value={viewData.conference.conference_code}
+                      mono
+                    />
+                    <DetailItem
+                      icon={InfoOutlined}
+                      label="Conference Status"
+                      value={formatLabel(viewData.conference.status)}
+                    />
+                    <DetailItem
+                      icon={CalendarTodayOutlined}
+                      label="Scheduled Date"
+                      value={formatCalendarDate(viewData.conference.scheduled_date)}
+                    />
+                    <DetailItem
+                      icon={ScheduleOutlined}
+                      label="Scheduled Time"
+                      value={formatClockTime(viewData.conference.scheduled_time)}
+                    />
+                    <DetailItem
+                      icon={PersonOutlined}
+                      label="Participants"
+                      value={viewData.conference.participants || viewData.conference.ahp_name}
+                      span={12}
+                    />
+                    <DetailItem
+                      icon={CheckCircleOutlined}
+                      label="Opened At"
+                      value={viewData.conference.accepted_at
+                        ? new Date(viewData.conference.accepted_at).toLocaleString()
+                        : 'Not opened by reception yet'}
+                      span={12}
+                    />
+                    {viewData.conference.cancelled_reason && (
+                      <NotePanel
+                        icon={WarningAmberOutlined}
+                        label="Conference Cancelled"
+                        value={viewData.conference.cancelled_at
+                          ? `${viewData.conference.cancelled_reason} — ${new Date(viewData.conference.cancelled_at).toLocaleString()}`
+                          : viewData.conference.cancelled_reason}
+                        tone="error"
+                      />
+                    )}
+                    {viewData.conference.notes && (
+                      <NotePanel
+                        icon={NotesOutlined}
+                        label="Conference Notes"
+                        value={viewData.conference.notes}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <Grid size={{ xs: 12 }}>
+                    <Typography color="text.secondary">
+                      No linked conference found for this appointment.
+                    </Typography>
+                  </Grid>
+                )}
                 {viewData.cancelled_reason && (
                   <NotePanel
                     icon={WarningAmberOutlined}
@@ -992,7 +1472,7 @@ const Appointments = () => {
                     tone="error"
                   />
                 )}
-              </SectionCard>
+              </ViewTopicCard>
 
               {(viewData.important_note || viewData.comments || viewData.notes
                 || viewData.patient_previous_records) && (
@@ -1062,71 +1542,6 @@ const Appointments = () => {
                   </Grid>
                 </SectionCard>
               )}
-
-              <SectionCard title="Linked Conference" icon={VideoCallOutlined}>
-                {viewData.conference ? (
-                  <>
-                    <DetailItem
-                      icon={VideoCallOutlined}
-                      label="Conference ID"
-                      value={viewData.conference.conference_code}
-                      mono
-                    />
-                    <DetailItem
-                      icon={InfoOutlined}
-                      label="Conference Status"
-                      value={formatLabel(viewData.conference.status)}
-                    />
-                    <DetailItem
-                      icon={CalendarTodayOutlined}
-                      label="Scheduled Date"
-                      value={formatCalendarDate(viewData.conference.scheduled_date)}
-                    />
-                    <DetailItem
-                      icon={ScheduleOutlined}
-                      label="Scheduled Time"
-                      value={formatClockTime(viewData.conference.scheduled_time)}
-                    />
-                    <DetailItem
-                      icon={PersonOutlined}
-                      label="Participants"
-                      value={viewData.conference.participants || viewData.conference.ahp_name}
-                      span={12}
-                    />
-                    <DetailItem
-                      icon={CheckCircleOutlined}
-                      label="Accepted At"
-                      value={viewData.conference.accepted_at
-                        ? new Date(viewData.conference.accepted_at).toLocaleString()
-                        : 'Not accepted yet'}
-                      span={12}
-                    />
-                    {viewData.conference.cancelled_reason && (
-                      <NotePanel
-                        icon={WarningAmberOutlined}
-                        label="Conference Cancelled"
-                        value={viewData.conference.cancelled_at
-                          ? `${viewData.conference.cancelled_reason} — ${new Date(viewData.conference.cancelled_at).toLocaleString()}`
-                          : viewData.conference.cancelled_reason}
-                        tone="error"
-                      />
-                    )}
-                    {viewData.conference.notes && (
-                      <NotePanel
-                        icon={NotesOutlined}
-                        label="Conference Notes"
-                        value={viewData.conference.notes}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <Grid size={{ xs: 12 }}>
-                    <Typography color="text.secondary">
-                      No linked conference found for this appointment.
-                    </Typography>
-                  </Grid>
-                )}
-              </SectionCard>
             </>
           ) : null}
         </DialogContent>

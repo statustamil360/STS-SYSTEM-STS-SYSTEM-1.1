@@ -14,20 +14,25 @@ import api from '../services/api';
 import { ROLES } from '../utils/constants';
 import useSystemDateTime from '../hooks/useSystemDateTime';
 import useCountdown, { getMeetingRemainingMs } from '../hooks/useCountdown';
+import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
+import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { formatClockTime } from '../utils/dateTime';
 
-/** Exactly 10:00 on the countdown (600 000 ms remaining). */
-const TEN_MINUTES_MS = 10 * 60 * 1000;
+/** Exactly 2:00 on the countdown (120 000 ms remaining). */
+const REMIND_LATER_MS = 2 * 60 * 1000;
 const REMIND_POLL_MS = 1000;
-const API_REFRESH_EVERY_TICKS = 60;
+const API_REFRESH_EVERY_TICKS = 15;
+
+/** Statuses where reception/admin still has to open the meeting. */
+const NOT_YET_OPENED = ['scheduled', 'confirmed'];
 
 const dismissKey = (userId) => `today_conf_popup_hide_${userId}`;
-const remind10Key = (userId) => `today_conf_popup_remind10_${userId}`;
-const remind10TriggeredKey = (userId, conferenceId) => `today_conf_popup_10triggered_${userId}_${conferenceId}`;
+const remindLaterKey = (userId) => `today_conf_popup_remind_${userId}`;
+const firedKey = (scope, userId, conferenceId) => `today_conf_popup_${scope}_${userId}_${conferenceId}`;
 
-const isRemind10Armed = (userId) => sessionStorage.getItem(remind10Key(userId)) === '1';
+const isRemindLaterArmed = (userId) => sessionStorage.getItem(remindLaterKey(userId)) === '1';
 
-const ConferenceSlideCard = ({ conference, onJoin }) => {
+const ConferenceSlideCard = ({ conference, onJoin, onJoinLabel = 'View Conference' }) => {
   const countdown = useCountdown(conference.scheduled_date, conference.scheduled_time);
   const isClosed = ['completed', 'cancelled'].includes(conference.status);
 
@@ -93,7 +98,7 @@ const ConferenceSlideCard = ({ conference, onJoin }) => {
         </Stack>
 
         <Button size="small" variant="contained" fullWidth sx={{ mt: 1.5, borderRadius: 2 }} onClick={() => onJoin(conference)}>
-          View Conference
+          {onJoinLabel}
         </Button>
       </CardContent>
     </Card>
@@ -103,24 +108,35 @@ const ConferenceSlideCard = ({ conference, onJoin }) => {
 const TodayConferencesPopup = () => {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
+  const conferencePopupEnabled = useSelector((state) => state.ui.conferencePopupEnabled);
   const { formatDate } = useSystemDateTime();
+  const openLeadMinutes = useConferenceOpenLeadMinutes();
+  const { can } = useReceptionistPermissions();
   const [open, setOpen] = useState(false);
   const [popupMode, setPopupMode] = useState('initial');
   const [conferences, setConferences] = useState([]);
   const [step, setStep] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const [remind10Minutes, setRemind10Minutes] = useState(false);
-  const [remind10Active, setRemind10Active] = useState(false);
+  const [remindLater, setRemindLater] = useState(false);
+  const [remindLaterActive, setRemindLaterActive] = useState(false);
 
   const openRef = useRef(false);
+  /** Previous remaining ms per conference, one map per threshold being watched. */
+  const remindPrevRef = useRef({});
+  const openWindowPrevRef = useRef({});
   const conferencesRef = useRef([]);
-  /** Previous remaining ms per conference — used to detect crossing 00:10:00. */
-  const prevRemainingRef = useRef({});
 
   const role = user?.role;
   const isGp = role === ROLES.GP;
   const isAhp = role === ROLES.AHP;
+  /** Reception opens meetings; admins get the same alert as their supervisor. */
+  const isMeetingHost = role === ROLES.ADMIN
+    || (role === ROLES.RECEPTIONIST && can('conferences_page'));
+  const isClinical = isGp || isAhp;
+  const isWatcher = isClinical || isMeetingHost;
+  const openWindowMs = openLeadMinutes * 60 * 1000;
+  const canOpenMeetings = can('conference_open');
 
   useEffect(() => {
     openRef.current = open;
@@ -132,7 +148,7 @@ const TodayConferencesPopup = () => {
 
   const loadConferences = useCallback(async () => {
     const { data } = await api.get('/conferences/schedule?range=today');
-    const rows = (data.data ?? []).filter((c) => !['completed', 'cancelled'].includes(c.status)).slice(0, 3);
+    const rows = (data.data ?? []).filter((c) => !['completed', 'cancelled'].includes(c.status));
     setConferences(rows);
     conferencesRef.current = rows;
     return rows;
@@ -140,7 +156,7 @@ const TodayConferencesPopup = () => {
 
   const seedRemainingBaseline = useCallback((rows) => {
     rows.forEach((c) => {
-      prevRemainingRef.current[c.id] = getMeetingRemainingMs(c);
+      remindPrevRef.current[c.id] = getMeetingRemainingMs(c);
     });
   }, []);
 
@@ -153,91 +169,112 @@ const TodayConferencesPopup = () => {
   }, [user?.id]);
 
   /**
-   * Reminder fires once when countdown crosses from above 00:10:00 to at/below 00:10:00.
-   * Example: 00:12:30 → armed → at 00:10:00 (not 00:10:59) popup reopens.
+   * Reminder fires once when the countdown crosses from above the threshold to at/below it.
+   * Example with a 2 minute threshold: 00:02:30 → armed → at 00:02:00 (not 00:02:59) popup reopens.
    */
-  const findTenMinuteCrossing = useCallback((rows) => {
-    if (!user?.id || !isRemind10Armed(user.id)) return null;
+  const findCrossing = useCallback((rows, thresholdMs, scope, prevRef, keepAfterStart = false) => {
+    if (!user?.id) return null;
     if (sessionStorage.getItem(dismissKey(user.id))) return null;
 
     for (const conference of rows) {
-      if (sessionStorage.getItem(remind10TriggeredKey(user.id, conference.id))) continue;
+      if (sessionStorage.getItem(firedKey(scope, user.id, conference.id))) continue;
 
       const remaining = getMeetingRemainingMs(conference);
-      const prev = prevRemainingRef.current[conference.id];
+      const prev = prevRef.current[conference.id];
+      prevRef.current[conference.id] = remaining;
 
-      if (prev === undefined) {
-        prevRemainingRef.current[conference.id] = remaining;
-        continue;
-      }
+      const inWindow = remaining <= thresholdMs && (keepAfterStart || remaining > 0);
+      // A conference already inside the window when first seen still deserves the popup.
+      const crossed = prev === undefined ? inWindow : prev > thresholdMs && inWindow;
 
-      const crossedTenMinuteMark = prev > TEN_MINUTES_MS && remaining <= TEN_MINUTES_MS && remaining > 0;
-      prevRemainingRef.current[conference.id] = remaining;
-
-      if (crossedTenMinuteMark) {
-        return conference;
-      }
+      if (crossed) return conference;
     }
 
     return null;
   }, [user?.id]);
 
-  const openTenMinuteReminder = useCallback((conference, rows) => {
+  /** Reception/admin need to know the moment the "Open meeting" button unlocks. */
+  const findOpenWindowDue = useCallback((rows) => findCrossing(
+    rows.filter((c) => NOT_YET_OPENED.includes(c.status)),
+    openWindowMs,
+    'openwindow',
+    openWindowPrevRef,
+    true,
+  ), [findCrossing, openWindowMs]);
+
+  const findRemindLaterDue = useCallback((rows) => {
+    if (!user?.id || !isRemindLaterArmed(user.id)) return null;
+    return findCrossing(rows, REMIND_LATER_MS, 'remind', remindPrevRef);
+  }, [findCrossing, user?.id]);
+
+  const reopenPopup = useCallback((mode, scope, conference, rows) => {
     if (!user?.id) return;
     const idx = rows.findIndex((c) => c.id === conference.id);
-    sessionStorage.setItem(remind10TriggeredKey(user.id, conference.id), '1');
-    setPopupMode('tenMinuteReminder');
+    sessionStorage.setItem(firedKey(scope, user.id, conference.id), '1');
+    setPopupMode(mode);
     setStep(idx >= 0 ? idx : 0);
     setDontShowAgain(false);
-    setRemind10Minutes(false);
+    setRemindLater(false);
     setOpen(true);
   }, [user?.id]);
 
-  const armTenMinuteReminder = useCallback((rows) => {
+  const armRemindLater = useCallback((rows) => {
     if (!user?.id) return;
-    sessionStorage.setItem(remind10Key(user.id), '1');
-    rows.forEach((c) => sessionStorage.removeItem(remind10TriggeredKey(user.id, c.id)));
+    sessionStorage.setItem(remindLaterKey(user.id), '1');
+    rows.forEach((c) => sessionStorage.removeItem(firedKey('remind', user.id, c.id)));
     seedRemainingBaseline(rows);
-    setRemind10Active(true);
+    setRemindLaterActive(true);
   }, [user?.id, seedRemainingBaseline]);
 
   const handleClose = () => {
     if (user?.id && dontShowAgain) {
       sessionStorage.setItem(dismissKey(user.id), '1');
-      sessionStorage.removeItem(remind10Key(user.id));
-      setRemind10Active(false);
-      prevRemainingRef.current = {};
-    } else if (popupMode === 'initial' && remind10Minutes && user?.id) {
-      armTenMinuteReminder(conferencesRef.current);
+      sessionStorage.removeItem(remindLaterKey(user.id));
+      setRemindLaterActive(false);
+      remindPrevRef.current = {};
+      openWindowPrevRef.current = {};
+    } else if (remindLater && user?.id) {
+      armRemindLater(conferencesRef.current);
     }
 
     setDontShowAgain(false);
-    setRemind10Minutes(false);
+    setRemindLater(false);
     setOpen(false);
   };
 
   useEffect(() => {
-    if ((!isGp && !isAhp) || !user?.id) return undefined;
+    if (!conferencePopupEnabled || !isWatcher || !user?.id) {
+      setOpen(false);
+      return undefined;
+    }
 
     if (sessionStorage.getItem(dismissKey(user.id))) {
       setLoaded(true);
       setOpen(false);
-      setRemind10Active(false);
+      setRemindLaterActive(false);
       return undefined;
     }
 
-    const armed = isRemind10Armed(user.id);
-    setRemind10Active(armed);
+    const armed = isRemindLaterArmed(user.id);
+    setRemindLaterActive(armed);
     setLoaded(false);
     setStep(0);
     setDontShowAgain(false);
-    setRemind10Minutes(false);
-    prevRemainingRef.current = {};
+    setRemindLater(false);
+    remindPrevRef.current = {};
+    openWindowPrevRef.current = {};
 
     loadConferences()
       .then((rows) => {
         if (armed) {
           seedRemainingBaseline(rows);
+          return;
+        }
+        // GP/AHP see today's list on login. Reception/admin wait until the
+        // "Open meeting" window opens, unless a meeting is already inside it.
+        if (isMeetingHost) {
+          const due = findOpenWindowDue(rows);
+          if (due) reopenPopup('openWindow', 'openwindow', due, rows);
           return;
         }
         if (rows.length > 0) {
@@ -251,21 +288,28 @@ const TodayConferencesPopup = () => {
       .finally(() => setLoaded(true));
 
     return undefined;
-  }, [isGp, isAhp, user?.id, loadConferences, openInitialPopup, seedRemainingBaseline]);
+  }, [
+    conferencePopupEnabled,
+    isWatcher,
+    isMeetingHost,
+    user?.id,
+    loadConferences,
+    openInitialPopup,
+    seedRemainingBaseline,
+    findOpenWindowDue,
+    reopenPopup,
+  ]);
 
   useEffect(() => {
-    if ((!isGp && !isAhp) || !user?.id || !remind10Active) return undefined;
+    if (!conferencePopupEnabled || !isWatcher || !user?.id) return undefined;
+    if (!remindLaterActive && !isMeetingHost) return undefined;
     if (sessionStorage.getItem(dismissKey(user.id))) return undefined;
 
     let tickCount = 0;
 
     const tick = async () => {
       if (sessionStorage.getItem(dismissKey(user.id))) {
-        setRemind10Active(false);
-        return;
-      }
-      if (!isRemind10Armed(user.id)) {
-        setRemind10Active(false);
+        setRemindLaterActive(false);
         return;
       }
       if (openRef.current) return;
@@ -280,9 +324,23 @@ const TodayConferencesPopup = () => {
         }
       }
 
-      const due = findTenMinuteCrossing(rows);
-      if (due) {
-        openTenMinuteReminder(due, rows);
+      if (isMeetingHost) {
+        const dueOpen = findOpenWindowDue(rows);
+        if (dueOpen) {
+          reopenPopup('openWindow', 'openwindow', dueOpen, rows);
+          return;
+        }
+      }
+
+      if (!remindLaterActive) return;
+      if (!isRemindLaterArmed(user.id)) {
+        setRemindLaterActive(false);
+        return;
+      }
+
+      const dueRemind = findRemindLaterDue(rows);
+      if (dueRemind) {
+        reopenPopup('remindLater', 'remind', dueRemind, rows);
       }
     };
 
@@ -290,21 +348,25 @@ const TodayConferencesPopup = () => {
     tick();
     return () => window.clearInterval(timer);
   }, [
-    remind10Active,
-    isGp,
-    isAhp,
+    conferencePopupEnabled,
+    remindLaterActive,
+    isWatcher,
+    isMeetingHost,
     user?.id,
     loadConferences,
-    findTenMinuteCrossing,
-    openTenMinuteReminder,
+    findOpenWindowDue,
+    findRemindLaterDue,
+    reopenPopup,
   ]);
 
-  if (!isGp && !isAhp) return null;
+  if (!conferencePopupEnabled || !isWatcher) return null;
   if (!loaded || !open) return null;
 
   const maxSteps = conferences.length;
-  const current = conferences[step];
-  const isTenMinuteReminder = popupMode === 'tenMinuteReminder';
+  const current = conferences[step] || conferences[0];
+  if (!current) return null;
+  const isRemindPopup = popupMode === 'remindLater';
+  const isOpenWindow = popupMode === 'openWindow';
 
   return (
     <Dialog
@@ -326,7 +388,9 @@ const TodayConferencesPopup = () => {
       <Box sx={{ px: 2, pt: 2, pb: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Today&apos;s Conferences</Typography>
-          <Typography variant="caption" color="text.secondary">{formatDate(new Date())}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {isOpenWindow ? 'This meeting can be opened now' : formatDate(new Date())}
+          </Typography>
         </Box>
         <IconButton size="small" onClick={handleClose}><CloseOutlined fontSize="small" /></IconButton>
       </Box>
@@ -334,10 +398,11 @@ const TodayConferencesPopup = () => {
       <Box sx={{ px: 2, pb: 2 }}>
         <ConferenceSlideCard
           conference={current}
+          onJoinLabel={isMeetingHost && canOpenMeetings ? 'Open meeting' : 'View Conference'}
           onJoin={(c) => {
             setOpen(false);
             setDontShowAgain(false);
-            setRemind10Minutes(false);
+            setRemindLater(false);
             navigate('/conferences?tab=upcoming', { state: { highlightId: c.id } });
           }}
         />
@@ -369,17 +434,17 @@ const TodayConferencesPopup = () => {
         <Stack
           direction="row"
           spacing={1.5}
-          sx={{ mt: 1.5, alignItems: 'center', justifyContent: isTenMinuteReminder ? 'flex-start' : 'space-between' }}
+          sx={{ mt: 1.5, alignItems: 'center', justifyContent: isRemindPopup ? 'flex-start' : 'space-between' }}
         >
           <FormControlLabel
-            sx={{ mx: 0, flex: isTenMinuteReminder ? undefined : 1, '& .MuiFormControlLabel-label': { lineHeight: 1.2 } }}
+            sx={{ mx: 0, flex: isRemindPopup ? undefined : 1, '& .MuiFormControlLabel-label': { lineHeight: 1.2 } }}
             control={
               <Checkbox
                 size="small"
                 checked={dontShowAgain}
                 onChange={(e) => {
                   setDontShowAgain(e.target.checked);
-                  if (e.target.checked) setRemind10Minutes(false);
+                  if (e.target.checked) setRemindLater(false);
                 }}
                 sx={{ p: 0.5 }}
               />
@@ -390,21 +455,21 @@ const TodayConferencesPopup = () => {
               </Typography>
             )}
           />
-          {!isTenMinuteReminder && (
+          {!isRemindPopup && (
             <FormControlLabel
               sx={{ mx: 0, flex: 1, '& .MuiFormControlLabel-label': { lineHeight: 1.2 } }}
               control={
                 <Checkbox
                   size="small"
-                  checked={remind10Minutes}
+                  checked={remindLater}
                   disabled={dontShowAgain}
-                  onChange={(e) => setRemind10Minutes(e.target.checked)}
+                  onChange={(e) => setRemindLater(e.target.checked)}
                   sx={{ p: 0.5 }}
                 />
               }
               label={(
                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                  Remaining 10 minutes
+                  Remaining 2 minutes
                 </Typography>
               )}
             />

@@ -8,14 +8,14 @@ exports.TIMEOUT_MINUTES = TIMEOUT_MINUTES;
 exports.TIMEOUT_REASON = TIMEOUT_REASON;
 
 /**
- * Cancel conferences that were not accepted within 10 minutes of start time.
- * Also cancels the linked appointment and records the timeout reason.
+ * Cancel conferences that reception did not open within 10 minutes of start time.
+ * Opened (waiting/live) meetings stay available until the receptionist ends them.
  */
 exports.processTimedOutConferences = async (executor = pool) => {
   const [timedOut] = await executor.execute(
     `SELECT c.id, c.appointment_id
      FROM conferences c
-     WHERE c.status IN ('scheduled', 'waiting')
+     WHERE c.status = 'scheduled'
        AND TIMESTAMP(c.scheduled_date, c.scheduled_time) <= DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
     [TIMEOUT_MINUTES]
   );

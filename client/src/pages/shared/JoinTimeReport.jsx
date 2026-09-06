@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Box, Grid, TextField, MenuItem, Button, Stack, Typography, Chip, CircularProgress,
-  Paper, ToggleButton, ToggleButtonGroup, Alert,
+  Grid, TextField, MenuItem, Button, Stack, Typography, Chip, CircularProgress,
+  IconButton, Tooltip, Box,
+  Dialog, DialogContent,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
   AccessTimeOutlined, SearchOutlined, CalendarTodayOutlined,
   DescriptionOutlined, GridOnOutlined, PictureAsPdfOutlined, ArticleOutlined,
-  PersonOutlined, MedicalServicesOutlined, HealthAndSafetyOutlined,
+  PersonOutlined,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import DataTable from '../../components/DataTable';
 import {
-  PremiumPageCard, PremiumSection, adminFieldSx, premiumButtonSx, premiumPaperSx,
+  PremiumPageCard, PremiumSection, adminFieldSx, premiumButtonSx,
 } from '../../components/PremiumPageLayout';
+import { PremiumDialogHeader, dialogPaperSx, dialogContentSx } from '../../components/PremiumFormFields';
 import api from '../../services/api';
-import { formatCalendarDate, formatClockTime, formatDateTime, formatDuration, formatDateKey } from '../../utils/dateTime';
+import { formatCalendarDate, formatTime, formatDuration, formatDateKey } from '../../utils/dateTime';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import useReceptionistPermissions from '../../hooks/useReceptionistPermissions';
 
 const EXPORT_FORMATS = [
   { value: 'csv', label: 'CSV', icon: DescriptionOutlined, color: 'info' },
@@ -29,9 +32,20 @@ const ROLE_OPTIONS = [
   { value: '', label: 'All roles' },
   { value: 'gp', label: 'GP only' },
   { value: 'ahp', label: 'AHP only' },
+  { value: 'guest', label: 'Guest only' },
 ];
 
-const formatRole = (role) => role?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
+const ROLE_DISPLAY = {
+  gp: { label: 'GP', color: 'primary' },
+  ahp: { label: 'AHP', color: 'success' },
+  guest: { label: 'Guest', color: 'info' },
+  guest_gp: { label: 'Guest GP', color: 'info' },
+  guest_ahp: { label: 'Guest AHP', color: 'info' },
+};
+
+const formatRole = (role) => ROLE_DISPLAY[role]?.label
+  || role?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  || '—';
 
 const todayIso = () => formatDateKey(new Date()) || new Date().toISOString().slice(0, 10);
 
@@ -40,26 +54,20 @@ const JoinTimeReport = () => {
     date: todayIso(),
     patient_id: '',
     role: '',
-    staff_id: '',
   });
   const [patients, setPatients] = useState([]);
-  const [gps, setGps] = useState([]);
-  const [ahps, setAhps] = useState([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(null);
   const [report, setReport] = useState(null);
   const [searched, setSearched] = useState(false);
+  const [viewRow, setViewRow] = useState(null);
+  const { can } = useReceptionistPermissions();
+  const canExportReports = can('reports_export');
 
   const loadOptions = useCallback(async () => {
     try {
-      const [patientsRes, gpsRes, ahpsRes] = await Promise.all([
-        api.get('/patients', { params: { limit: 500, status: 'active' } }),
-        api.get('/staff/gps', { params: { limit: 500, status: 'active' } }),
-        api.get('/staff/ahps', { params: { limit: 500, status: 'active' } }),
-      ]);
-      setPatients(patientsRes.data.data ?? []);
-      setGps(gpsRes.data.data ?? []);
-      setAhps(ahpsRes.data.data ?? []);
+      const { data } = await api.get('/patients', { params: { limit: 500, status: 'active' } });
+      setPatients(data.data ?? []);
     } catch {
       toast.error('Failed to load filter options');
     }
@@ -73,8 +81,6 @@ const JoinTimeReport = () => {
     const params = { date: filters.date };
     if (filters.patient_id) params.patient_id = filters.patient_id;
     if (filters.role) params.role = filters.role;
-    if (filters.staff_id && filters.role === 'gp') params.gp_id = filters.staff_id;
-    if (filters.staff_id && filters.role === 'ahp') params.ahp_id = filters.staff_id;
     return params;
   }, [filters]);
 
@@ -88,9 +94,6 @@ const JoinTimeReport = () => {
     try {
       const { data } = await api.get('/conferences/join-time-report', { params: buildParams() });
       setReport(data.data);
-      if (!data.data?.rows?.length) {
-        toast.info('No join time records found for the selected filters. Try another date or run a new meeting with join/leave tracking.');
-      }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load join time report');
       setReport(null);
@@ -100,10 +103,6 @@ const JoinTimeReport = () => {
   }, [filters.date, buildParams]);
 
   usePageRefreshRegister(fetchReport);
-
-  useEffect(() => {
-    fetchReport();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load only
 
   const handleExport = async (format) => {
     if (!filters.date) {
@@ -133,77 +132,165 @@ const JoinTimeReport = () => {
     }
   };
 
-  const staffOptions = useMemo(() => {
-    if (filters.role === 'gp') {
-      return gps.map((g) => ({
-        value: String(g.id),
-        label: `${g.first_name || ''} ${g.last_name || ''}`.trim() || g.gp_code,
-      }));
-    }
-    if (filters.role === 'ahp') {
-      return ahps.map((a) => ({
-        value: String(a.id),
-        label: `${a.first_name || ''} ${a.last_name || ''}`.trim() || a.ahp_code,
-      }));
-    }
-    return [];
-  }, [filters.role, gps, ahps]);
+  const durationChip = (seconds) => (
+    <Box
+      sx={{
+        display: 'inline-flex',
+        px: 1,
+        py: 0.25,
+        borderRadius: 1,
+        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+      }}
+    >
+      <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main', fontVariantNumeric: 'tabular-nums' }}>
+        {formatDuration(seconds)}
+      </Typography>
+    </Box>
+  );
 
   const columns = [
-    { field: 'conference_code', headerName: 'Conference ID' },
-    { field: 'patient_name', headerName: 'Patient' },
     {
-      field: 'meeting_date',
-      headerName: 'Date',
-      render: (r) => formatCalendarDate(r.meeting_date),
-    },
-    {
-      field: 'meeting_time',
-      headerName: 'Time',
-      render: (r) => formatClockTime(r.meeting_time),
-    },
-    { field: 'participant_name', headerName: 'Participant' },
-    {
-      field: 'participant_role',
-      headerName: 'Role',
+      field: 'patient_name',
+      headerName: 'Patient',
       render: (r) => (
-        <Chip label={formatRole(r.participant_role)} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />
-      ),
-    },
-    {
-      field: 'joined_at',
-      headerName: 'Joined',
-      render: (r) => formatDateTime(r.joined_at),
-    },
-    {
-      field: 'left_at',
-      headerName: 'Left',
-      render: (r) => (r.left_at ? formatDateTime(r.left_at) : '—'),
-    },
-    {
-      field: 'duration_seconds',
-      headerName: 'Duration',
-      render: (r) => (
-        <Typography variant="body2" fontWeight={700} color="primary.main">
-          {formatDuration(r.duration_seconds)}
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {r.patient_name || '—'}
         </Typography>
       ),
     },
+    {
+      field: 'conference_code',
+      headerName: 'Conference ID',
+      render: (r) => (
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 700,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            fontSize: '0.8125rem',
+            letterSpacing: '0.02em',
+            color: 'primary.main',
+          }}
+        >
+          {r.conference_code || '—'}
+        </Typography>
+      ),
+    },
+    {
+      field: 'meeting_date',
+      headerName: 'Conference date',
+      render: (r) => (
+        <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+          {formatCalendarDate(r.meeting_date)}
+        </Typography>
+      ),
+    },
+    {
+      field: 'started_at',
+      headerName: 'Start time',
+      render: (r) => (
+        <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+          {r.started_at ? formatTime(r.started_at) : '—'}
+        </Typography>
+      ),
+    },
+    {
+      field: 'ended_at',
+      headerName: 'End time',
+      render: (r) => (
+        <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
+          {r.ended_at ? formatTime(r.ended_at) : '—'}
+        </Typography>
+      ),
+    },
+    {
+      field: 'duration_seconds',
+      headerName: 'Total duration',
+      render: (r) => durationChip(r.duration_seconds),
+    },
   ];
 
+  const participantColumns = [
+    {
+      field: 'participant_name',
+      headerName: 'Participant',
+      render: (r) => (
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {r.participant_name || '—'}
+        </Typography>
+      ),
+    },
+    {
+      field: 'participant_role',
+      headerName: 'Role',
+      render: (r) => {
+        const meta = ROLE_DISPLAY[r.participant_role] || { label: formatRole(r.participant_role), color: 'default' };
+        return (
+          <Chip
+            label={meta.label}
+            size="small"
+            color={meta.color}
+            variant="outlined"
+            sx={{ height: 22, fontWeight: 700, fontSize: '0.6875rem', letterSpacing: '0.02em' }}
+          />
+        );
+      },
+    },
+    {
+      field: 'duration_seconds',
+      headerName: 'Stay time',
+      render: (r) => durationChip(r.duration_seconds),
+    },
+  ];
+
+  const exportActions = canExportReports ? (
+    <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+      {EXPORT_FORMATS.map((format) => {
+        const Icon = format.icon;
+        const busy = exporting === format.value;
+        return (
+          <Tooltip key={format.value} title={`Export ${format.label}`}>
+            <span>
+              <IconButton
+                size="small"
+                color={format.color}
+                disabled={!report || !!exporting}
+                onClick={() => handleExport(format.value)}
+                aria-label={`Download ${format.label}`}
+                sx={{
+                  width: 36,
+                  height: 36,
+                  border: '1px solid',
+                  borderColor: (theme) => alpha(theme.palette[format.color].main, 0.28),
+                  bgcolor: (theme) => alpha(theme.palette[format.color].main, 0.08),
+                  '&:hover': {
+                    bgcolor: (theme) => alpha(theme.palette[format.color].main, 0.16),
+                  },
+                }}
+              >
+                {busy ? <CircularProgress size={16} color="inherit" /> : <Icon sx={{ fontSize: 18 }} />}
+              </IconButton>
+            </span>
+          </Tooltip>
+        );
+      })}
+    </Stack>
+  ) : null;
+
   return (
-    <Stack spacing={2.5}>
-      <PremiumPageCard
-        icon={AccessTimeOutlined}
-        title="Participant Join Time Calculator"
-        subtitle="Filter by date, patient, and GP/AHP role — used for salary and payroll records"
-      >
+    <PremiumPageCard
+      icon={AccessTimeOutlined}
+      title="Participant Join Time Calculator"
+      subtitle="Filter by date, patient, and GP, AHP, or guest role — used for salary and payroll records"
+      action={exportActions}
+    >
+      <Stack spacing={2.5}>
         <PremiumSection
           icon={CalendarTodayOutlined}
           title="Filters"
-          subtitle="Select criteria then click Calculate join times"
+          subtitle="Select criteria then click Calculate"
         >
-          <Grid container spacing={2}>
+          <Grid container spacing={2} sx={{ alignItems: 'flex-end' }}>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <TextField
                 fullWidth
@@ -243,7 +330,7 @@ const JoinTimeReport = () => {
                 select
                 label="Participant role"
                 value={filters.role}
-                onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value, staff_id: '' }))}
+                onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}
                 sx={adminFieldSx}
               >
                 {ROLE_OPTIONS.map((opt) => (
@@ -252,169 +339,82 @@ const JoinTimeReport = () => {
               </TextField>
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <TextField
+              <Button
                 fullWidth
-                select
-                label={filters.role === 'gp' ? 'GP (optional)' : filters.role === 'ahp' ? 'AHP (optional)' : 'Specific staff'}
-                value={filters.staff_id}
-                onChange={(e) => setFilters((f) => ({ ...f, staff_id: e.target.value }))}
-                disabled={!filters.role}
-                sx={adminFieldSx}
+                variant="contained"
+                startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SearchOutlined />}
+                onClick={fetchReport}
+                disabled={loading}
+                sx={{ ...premiumButtonSx, minHeight: 44 }}
               >
-                <MenuItem value="">
-                  {filters.role ? `All ${filters.role === 'gp' ? 'GPs' : 'AHPs'}` : 'Select role first'}
-                </MenuItem>
-                {staffOptions.map((opt) => (
-                  <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                ))}
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-                <Button
-                  variant="contained"
-                  startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SearchOutlined />}
-                  onClick={fetchReport}
-                  disabled={loading}
-                  sx={premiumButtonSx}
-                >
-                  Calculate join times
-                </Button>
-                <ToggleButtonGroup
-                  exclusive
-                  size="small"
-                  value={filters.role || 'all'}
-                  onChange={(_e, val) => {
-                    if (!val) return;
-                    setFilters((f) => ({
-                      ...f,
-                      role: val === 'all' ? '' : val,
-                      staff_id: '',
-                    }));
-                  }}
-                  sx={{ flexWrap: 'wrap' }}
-                >
-                  <ToggleButton value="all">All</ToggleButton>
-                  <ToggleButton value="gp">
-                    <MedicalServicesOutlined sx={{ fontSize: 16, mr: 0.5 }} /> GP
-                  </ToggleButton>
-                  <ToggleButton value="ahp">
-                    <HealthAndSafetyOutlined sx={{ fontSize: 16, mr: 0.5 }} /> AHP
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </Stack>
+                Calculate
+              </Button>
             </Grid>
           </Grid>
         </PremiumSection>
-      </PremiumPageCard>
 
-      {searched && !loading && report?.rows?.length === 0 && (
-        <Alert severity="info" sx={{ borderRadius: 2 }}>
-          No join time records for {formatCalendarDate(filters.date)} with the current filters.
-          Pick a date when completed meetings were held, or run a new meeting (GP joins and ends the call) to record times.
-        </Alert>
-      )}
+        <DataTable
+          title="Join time details"
+          columns={columns}
+          rows={report?.rows ?? []}
+          loading={loading}
+          total={report?.rows?.length}
+          page={0}
+          rowsPerPage={report?.rows?.length || 10}
+          onView={setViewRow}
+          showRowNumbers
+          embedded
+          emptyTitle={searched ? `No conferences for ${formatCalendarDate(filters.date)}` : 'Select filters and calculate'}
+          emptySubtitle={searched
+            ? 'Choose a date with completed meetings, or start a session so join and leave times can be recorded.'
+            : 'Select a date and optional filters, then click Calculate.'}
+          headerActions={report?.rows?.length ? (
+            <Chip
+              label={`${formatCalendarDate(filters.date)} · ${report.summary.grand_total_label} meeting time`}
+              size="small"
+              color="primary"
+              variant="outlined"
+              sx={{ fontWeight: 700 }}
+            />
+          ) : null}
+        />
+      </Stack>
 
-      {report && report.rows?.length > 0 && (
-        <Grid container spacing={2.5}>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper elevation={0} sx={{ ...premiumPaperSx, p: 2 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>Total join time</Typography>
-              <Typography variant="h5" fontWeight={800} color="primary.main">
-                {report.summary.grand_total_label}
-              </Typography>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper elevation={0} sx={{ ...premiumPaperSx, p: 2 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>Sessions</Typography>
-              <Typography variant="h5" fontWeight={800}>{report.summary.session_count}</Typography>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper elevation={0} sx={{ ...premiumPaperSx, p: 2 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>Participants</Typography>
-              <Typography variant="h5" fontWeight={800}>{report.summary.participant_count}</Typography>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper elevation={0} sx={{ ...premiumPaperSx, p: 2 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>Meetings</Typography>
-              <Typography variant="h5" fontWeight={800}>{report.summary.conference_count}</Typography>
-            </Paper>
-          </Grid>
-        </Grid>
-      )}
-
-      {report?.summary?.by_participant?.length > 0 && (
-        <PremiumPageCard
-          icon={PersonOutlined}
-          title="Totals by participant"
-          subtitle="Salary basis — includes all join/rejoin sessions"
-        >
-          <Stack direction="row" flexWrap="wrap" gap={1}>
-            {report.summary.by_participant.map((p) => (
-              <Chip
-                key={p.participant_user_id}
-                label={`${p.participant_name} (${formatRole(p.participant_role)}): ${p.total_label}`}
-                sx={{
-                  fontWeight: 600,
-                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-                  border: '1px solid',
-                  borderColor: (theme) => alpha(theme.palette.primary.main, 0.15),
-                }}
-              />
-            ))}
-          </Stack>
-        </PremiumPageCard>
-      )}
-
-      <PremiumPageCard
-        icon={DescriptionOutlined}
-        title="Export report"
-        subtitle="Download join time details as PDF, Word, CSV, or Excel"
+      <Dialog
+        open={Boolean(viewRow)}
+        onClose={() => setViewRow(null)}
+        maxWidth="md"
+        fullWidth
+        slotProps={{ paper: { sx: dialogPaperSx } }}
       >
-        <Stack direction="row" flexWrap="wrap" gap={1.5}>
-          {EXPORT_FORMATS.map((format) => {
-            const Icon = format.icon;
-            const busy = exporting === format.value;
-            return (
-              <Button
-                key={format.value}
-                variant="outlined"
-                color={format.color}
-                disabled={!report || !!exporting}
-                startIcon={busy ? <CircularProgress size={14} /> : <Icon />}
-                onClick={() => handleExport(format.value)}
-                sx={{ borderRadius: 2, fontWeight: 600, textTransform: 'none' }}
-              >
-                {format.label}
-              </Button>
-            );
-          })}
-        </Stack>
-      </PremiumPageCard>
-
-      <DataTable
-        title="Join time details"
-        columns={columns}
-        rows={report?.rows ?? []}
-        loading={loading}
-        page={0}
-        rowsPerPage={report?.rows?.length || 10}
-        actions={false}
-        showRowNumbers
-        headerActions={report?.rows?.length ? (
-          <Chip
-            label={`${formatCalendarDate(filters.date)} · ${report.summary.grand_total_label} total`}
-            size="small"
-            color="primary"
-            variant="outlined"
-            sx={{ fontWeight: 700 }}
+        <PremiumDialogHeader
+          icon={PersonOutlined}
+          title={viewRow ? `${viewRow.conference_code} participant times` : 'Participant times'}
+          subtitle={viewRow
+            ? `${viewRow.patient_name} · ${formatCalendarDate(viewRow.meeting_date)} · meeting ${viewRow.duration_label}`
+            : ''}
+        />
+        <DialogContent sx={dialogContentSx}>
+          <DataTable
+            title="Stay time by participant"
+            columns={participantColumns}
+            rows={(viewRow?.participants ?? []).map((participant) => ({
+              ...participant,
+              id: participant.participant_user_id,
+            }))}
+            loading={false}
+            total={viewRow?.participants?.length}
+            page={0}
+            rowsPerPage={viewRow?.participants?.length || 10}
+            actions={false}
+            showRowNumbers
+            embedded
+            emptyTitle="No participant stay times"
+            emptySubtitle="No GP, AHP, or guest stay time was recorded for this conference."
           />
-        ) : null}
-      />
-    </Stack>
+        </DialogContent>
+      </Dialog>
+    </PremiumPageCard>
   );
 };
 

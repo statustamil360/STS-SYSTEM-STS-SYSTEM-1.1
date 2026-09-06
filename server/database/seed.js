@@ -12,11 +12,12 @@ async function seed() {
     multipleStatements: true,
   });
 
-  const [dbs] = await connection.query("SHOW DATABASES LIKE 'amc_teleconference'");
+  const dbName = process.env.DB_NAME || 'amc_asterix';
+  const [dbs] = await connection.query(`SHOW DATABASES LIKE ${connection.escape(dbName)}`);
   let needsSchema = true;
   if (dbs.length) {
     const [tables] = await connection.query(
-      "SHOW TABLES FROM amc_teleconference LIKE 'roles'"
+      `SHOW TABLES FROM \`${dbName}\` LIKE 'roles'`
     );
     needsSchema = !tables.length;
   }
@@ -29,7 +30,6 @@ async function seed() {
     console.log('Database schema already exists, skipping creation.');
   }
 
-  const dbName = process.env.DB_NAME || 'amc_teleconference';
   await connection.query(`USE \`${dbName}\``);
 
   const [profTable] = await connection.query("SHOW TABLES LIKE 'ahp_professions'");
@@ -94,7 +94,8 @@ async function seed() {
       ('hospital_name', 'AMC Healthcare'),
       ('timezone', 'Asia/Colombo'),
       ('language', 'en'),
-      ('theme', 'light');
+      ('theme', 'light'),
+      ('conference_open_lead_minutes', '15');
   `);
 
   const demoPassword = await bcrypt.hash('Admin@123', 12);
@@ -186,10 +187,14 @@ async function seed() {
         `INSERT INTO appointments (
           appointment_code, patient_id, gp_id, ahp_id, title,
           appointment_date, appointment_time, status, notes, created_by
-        ) VALUES ('APT-DEMO-TODAY', ?, ?, ?, 'Demo Teleconference — Today', CURDATE(), '15:00:00', 'scheduled', 'Sample meeting for testing GP accept and AHP join', ?)`,
+        ) VALUES ('APT-DEMO-TODAY', ?, ?, ?, 'Demo Teleconference — Today', CURDATE(), '15:00:00', 'scheduled', 'Sample meeting for testing reception open and participant join', ?)`,
         [patientId, gpId, ahpId, receptionistUserId]
       );
       demoAppointmentId = apptResult.insertId;
+      await connection.query(
+        'INSERT IGNORE INTO appointment_gps (appointment_id, gp_id) VALUES (?, ?)',
+        [demoAppointmentId, gpId]
+      );
       await connection.query(
         'INSERT INTO appointment_ahps (appointment_id, profession, ahp_id) VALUES (?, ?, ?)',
         [demoAppointmentId, 'Physiotherapist', ahpId]
@@ -220,6 +225,10 @@ async function seed() {
         [patientId2, gpId, ahpId, receptionistUserId]
       );
       demoAppointmentId2 = apptResult2.insertId;
+      await connection.query(
+        'INSERT IGNORE INTO appointment_gps (appointment_id, gp_id) VALUES (?, ?)',
+        [demoAppointmentId2, gpId]
+      );
       await connection.query(
         'INSERT INTO appointment_ahps (appointment_id, profession, ahp_id) VALUES (?, ?, ?)',
         [demoAppointmentId2, 'Physiotherapist', ahpId]

@@ -14,25 +14,33 @@ const popPulse = keyframes`
   50% { transform: scale(1.08); box-shadow: 0 12px 32px rgba(13, 148, 136, 0.5); }
 `;
 
+const CALENDAR_ROLES = [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.GP, ROLES.AHP];
+
 const FloatingCalendarButton = () => {
   const { user } = useSelector((state) => state.auth);
   const { receptionist_calendar_widget } = useSelector((state) => state.settings);
+  const { calendarPopupEnabled } = useSelector((state) => state.ui);
   const { formatDateKey } = useSystemDateTime();
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState([]);
   const [todayConferences, setTodayConferences] = useState([]);
 
+  const role = user?.role;
+  const isFrontDesk = role === ROLES.RECEPTIONIST || role === ROLES.ADMIN;
+  const isClinical = role === ROLES.GP || role === ROLES.AHP;
+
   const loadEvents = useCallback(async () => {
     try {
-      const [apptRes, confRes, todayConfRes] = await Promise.all([
-        api.get('/dashboard/appointments/today'),
+      const requests = [
         api.get('/conferences/schedule?range=month'),
         api.get('/conferences/schedule?range=today'),
-      ]);
-      const appts = apptRes.data.data ?? [];
+        ...(isFrontDesk ? [api.get('/dashboard/appointments/today')] : []),
+      ];
+      const [confRes, todayConfRes, apptRes] = await Promise.all(requests);
       const confs = confRes.data.data ?? [];
       const todayConfs = (todayConfRes.data.data ?? [])
         .filter((c) => !['completed', 'cancelled'].includes(c.status));
+      const appts = isFrontDesk ? (apptRes?.data?.data ?? []) : [];
       setTodayConferences(todayConfs);
       setEvents([
         ...appts.map((a) => ({
@@ -50,13 +58,15 @@ const FloatingCalendarButton = () => {
       setEvents([]);
       setTodayConferences([]);
     }
-  }, [formatDateKey]);
+  }, [formatDateKey, isFrontDesk]);
 
   useEffect(() => {
     if (open) loadEvents();
   }, [open, loadEvents]);
 
-  if (user?.role !== ROLES.RECEPTIONIST || receptionist_calendar_widget === false) return null;
+  if (!CALENDAR_ROLES.includes(role)) return null;
+  if (!calendarPopupEnabled) return null;
+  if (role === ROLES.RECEPTIONIST && receptionist_calendar_widget === false) return null;
 
   return (
     <>
@@ -79,7 +89,7 @@ const FloatingCalendarButton = () => {
 
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pb: 1 }}>
-          Schedule Calendar
+          {isClinical ? 'Assigned Conferences' : 'Schedule Calendar'}
           <IconButton size="small" onClick={() => setOpen(false)}><CloseOutlined /></IconButton>
         </DialogTitle>
         <DialogContent dividers>

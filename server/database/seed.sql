@@ -1,4 +1,4 @@
-USE amc_teleconference;
+USE amc_asterix;
 
 INSERT INTO roles (name, description) VALUES
   ('super_admin', 'Highest authority - system owner'),
@@ -26,4 +26,5 @@ INSERT INTO settings (setting_key, setting_value) VALUES
   ('timezone', 'Asia/Colombo'),
   ('language', 'en'),
   ('theme', 'light'),
+  ('conference_open_lead_minutes', '15'),
   ('backup_settings', '{"auto_backup":true,"frequency":"daily"}');

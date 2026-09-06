@@ -6,7 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const envText = fs.readFileSync(path.join(rootDir, '..', 'server', '.env'), 'utf8');
+const envFile = path.join(rootDir, '..', 'server', '.env');
+const envText = fs.existsSync(envFile) ? fs.readFileSync(envFile, 'utf8') : '';
 const envVal = (key) => envText.split(/\r?\n/).find((line) => line.startsWith(`${key}=`))?.split('=').slice(1).join('=').trim();
 const lanIp = envVal('LAN_IP');
 const publicHost = (() => {

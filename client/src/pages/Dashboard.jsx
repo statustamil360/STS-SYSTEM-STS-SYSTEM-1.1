@@ -17,12 +17,14 @@ import StatCard from '../components/StatCard';
 import ClinicalNextMeetingPanel from '../components/ClinicalNextMeetingPanel';
 import api from '../services/api';
 import { ROLE_LABELS, ROLES } from '../utils/constants';
+import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import useSystemDateTime from '../hooks/useSystemDateTime';
 import { formatDuration } from '../utils/dateTime';
 import { sortMeetingsByCountdown } from '../hooks/useCountdown';
 import SystemClock from '../components/SystemClock';
 import { usePageRefreshRegister } from '../context/PageRefreshContext';
 import PageLoader from '../components/PageLoader';
+import { isDashboardCardEnabled, STAT_ROW_KEY } from '../utils/dashboardPreferences';
 
 const STAT_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
@@ -77,11 +79,20 @@ const ADMIN_ACTIONS = [
 ];
 
 const RECEPTIONIST_ACTIONS = [
-  { label: 'Add Patient', path: '/patients', icon: LocalHospitalOutlined },
-  { label: 'Schedule Conference', path: '/conferences', icon: VideoCallOutlined },
-  { label: 'Book Appointment', path: '/appointments', icon: EventOutlined },
-  { label: 'View Tasks', path: '/tasks', icon: TaskAltOutlined },
+  { label: 'Add Patient', path: '/patients', icon: LocalHospitalOutlined, pageKey: 'patients_page' },
+  { label: 'Schedule Conference', path: '/conferences', icon: VideoCallOutlined, pageKey: 'conferences_page' },
+  { label: 'Book Appointment', path: '/appointments', icon: EventOutlined, pageKey: 'appointments_page' },
+  { label: 'View Tasks', path: '/tasks?tab=inbox', icon: TaskAltOutlined, pageKey: 'tasks_page' },
 ];
+
+const RECEPTIONIST_STAT_PAGE_KEYS = {
+  todaysAppointments: 'appointments_page',
+  patients: 'patients_page',
+  upcomingConferences: 'conferences_page',
+  pendingTasks: 'tasks_page',
+  availableGps: 'gps_page',
+  availableAhps: 'ahps_page',
+};
 
 const GP_ACTIONS = [
   { label: 'View Conferences', path: '/conferences', icon: VideoCallOutlined },
@@ -300,6 +311,8 @@ const QuickActionsList = ({ actions, onNavigate }) => (
 
 const Dashboard = () => {
   const { user } = useSelector((state) => state.auth);
+  const dashboardCards = useSelector((state) => state.ui.dashboardCards);
+  const cardOn = (key) => isDashboardCardEnabled(dashboardCards, key);
   const { formatDate, formatDateTime, timezone } = useSystemDateTime();
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
@@ -317,25 +330,29 @@ const Dashboard = () => {
   const isReceptionist = role === ROLES.RECEPTIONIST;
   const isGp = role === ROLES.GP;
   const isAhp = role === ROLES.AHP;
+  const { can } = useReceptionistPermissions();
+  const canSeeConferencesPage = can('conferences_page');
+  const canSeeAppointmentsPage = can('appointments_page');
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const isClinical = [ROLES.GP, ROLES.AHP].includes(role);
+      const needsTodayMeetings = isClinical || [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(role);
       const canViewJoinTime = [ROLES.ADMIN, ROLES.RECEPTIONIST].includes(role);
       const requests = [
         api.get('/dashboard/stats'),
         api.get('/dashboard/appointments/today'),
         api.get('/dashboard/conferences/recent'),
         api.get('/dashboard/activity'),
-        ...(isClinical ? [api.get('/conferences/schedule?range=today')] : []),
+        ...(needsTodayMeetings ? [api.get('/conferences/schedule?range=today')] : []),
         ...(canViewJoinTime ? [api.get('/dashboard/join-time-summary')] : []),
       ];
       const results = await Promise.all(requests);
       const [statsRes, apptRes, confRes, actRes] = results;
       let idx = 4;
-      const todayConfRes = isClinical ? results[idx++] : null;
+      const todayConfRes = needsTodayMeetings ? results[idx++] : null;
       const joinTimeRes = canViewJoinTime ? results[idx] : null;
       const appts = apptRes.data.data ?? [];
       const confs = confRes.data.data ?? [];
@@ -345,7 +362,7 @@ const Dashboard = () => {
       setActivities(actRes.data.data ?? []);
       setJoinTimeSummary(canViewJoinTime ? (joinTimeRes?.data?.data ?? null) : null);
 
-      if (isClinical && todayConfRes) {
+      if (needsTodayMeetings && todayConfRes) {
         const todayRows = (todayConfRes.data.data ?? [])
           .filter((c) => !['completed', 'cancelled'].includes(c.status));
         setTodayMeetings(sortMeetingsByCountdown(todayRows));
@@ -367,7 +384,7 @@ const Dashboard = () => {
   usePageRefreshRegister(loadDashboard);
 
   useEffect(() => {
-    if (!isGp && !isAhp) return undefined;
+    if (!isGp && !isAhp && !isReceptionist && !isAdmin) return undefined;
 
     const refreshTodayMeetings = () => {
       api.get('/conferences/schedule?range=today')
@@ -381,9 +398,14 @@ const Dashboard = () => {
 
     const timer = window.setInterval(refreshTodayMeetings, 15000);
     return () => window.clearInterval(timer);
-  }, [isGp, isAhp]);
+  }, [isGp, isAhp, isReceptionist, isAdmin]);
 
-  const statCards = STAT_CONFIG[role] || [];
+  const statCards = (STAT_CONFIG[role] || []).filter((card) => {
+    if (!cardOn(STAT_ROW_KEY)) return false;
+    if (!isReceptionist) return true;
+    const pageKey = RECEPTIONIST_STAT_PAGE_KEYS[card.key];
+    return !pageKey || can(pageKey);
+  });
   const statGridSize = getStatGridSize(statCards.length);
   const displayName = user?.profile
     ? `${user.profile.first_name || ''} ${user.profile.last_name || ''}`.trim()
@@ -409,7 +431,7 @@ const Dashboard = () => {
     : isAdmin
       ? ADMIN_ACTIONS
       : isReceptionist
-        ? RECEPTIONIST_ACTIONS
+        ? RECEPTIONIST_ACTIONS.filter((action) => !action.pageKey || can(action.pageKey))
         : isGp
           ? GP_ACTIONS
           : isAhp
@@ -501,7 +523,7 @@ const Dashboard = () => {
               </Typography>
             </Box>
             <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
-              {(isGp || isAhp) && (
+              {cardOn('section_next_meeting') && (isGp || isAhp || isAdmin || (isReceptionist && canSeeConferencesPage)) && (
                 <ClinicalNextMeetingPanel
                   meeting={nextTodayMeeting}
                   userRole={role}
@@ -538,6 +560,7 @@ const Dashboard = () => {
         </Box>
       </Paper>
 
+      {statCards.length > 0 && (
       <Grid container spacing={2.5} sx={{ mb: 3 }}>
         {loading
           ? statCards.map((s) => (
@@ -557,11 +580,13 @@ const Dashboard = () => {
             </Grid>
           ))}
       </Grid>
+      )}
 
       <Grid container spacing={2.5}>
-        {!isSuperAdmin && (
+        {!isSuperAdmin && (cardOn('section_appointments') || cardOn('section_conferences') || cardOn('section_join_time')) && (
           <Grid size={{ xs: 12, lg: 4 }}>
             <Stack spacing={2.5}>
+              {cardOn('section_appointments') && (!isReceptionist || canSeeAppointmentsPage) && (
               <SectionCard
                 title="Today's appointments"
                 subtitle={`${appointments.length} scheduled for today`}
@@ -585,7 +610,9 @@ const Dashboard = () => {
                   </Box>
                 )}
               </SectionCard>
+              )}
 
+              {cardOn('section_conferences') && (!isReceptionist || canSeeConferencesPage) && (
               <SectionCard
                 title="Recent conferences"
                 subtitle={`${conferences.length} in the pipeline`}
@@ -610,8 +637,9 @@ const Dashboard = () => {
                   </Box>
                 )}
               </SectionCard>
+              )}
 
-              {(isAdmin || isReceptionist) && (
+              {cardOn('section_join_time') && (isAdmin || (isReceptionist && canSeeConferencesPage)) && (
                 <SectionCard
                   title="Participant join time"
                   subtitle={joinTimeSummary?.month_label
@@ -698,7 +726,7 @@ const Dashboard = () => {
           </Grid>
         )}
 
-        {(isSuperAdmin || isAdmin) && (
+        {cardOn('section_quick_actions') && (isSuperAdmin || isAdmin) && (
           <Grid size={{ xs: 12, lg: 4 }}>
             <SectionCard
               title="Quick actions"
@@ -711,9 +739,10 @@ const Dashboard = () => {
           </Grid>
         )}
 
+        {(cardOn('section_analytics') || (cardOn('section_quick_actions') && (isReceptionist || isGp || isAhp))) && (
         <Grid size={{ xs: 12, lg: 8 }}>
           <Stack spacing={2.5}>
-            {(isReceptionist || isGp || isAhp) && (
+            {cardOn('section_quick_actions') && (isReceptionist || isGp || isAhp) && (
               <SectionCard
                 title="Quick actions"
                 subtitle={quickActionsSubtitle}
@@ -724,6 +753,7 @@ const Dashboard = () => {
               </SectionCard>
             )}
 
+            {cardOn('section_analytics') && (
             <SectionCard title="Analytics snapshot" subtitle="Key metrics at a glance" icon={InsertChartOutlined} accent="info">
               {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
@@ -769,10 +799,12 @@ const Dashboard = () => {
                 <EmptyState icon={InsertChartOutlined} message="No metrics available yet." />
               )}
             </SectionCard>
+            )}
           </Stack>
         </Grid>
+        )}
 
-        {isSuperAdmin && (
+        {cardOn('section_activity') && isSuperAdmin && (
           <Grid size={{ xs: 12 }}>
             <SectionCard
               title="Recent system activity"

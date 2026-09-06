@@ -8,12 +8,12 @@ const notifyUser = async (conn, userId, title, message) => {
   );
 };
 
-const syncParticipants = async (conn, conferenceId, gpId, ahpIds, isNew) => {
+const syncParticipants = async (conn, conferenceId, gpIds, ahpIds, isNew) => {
   await conn.execute('DELETE FROM conference_participants WHERE conference_id = ?', [conferenceId]);
 
   const participants = [];
 
-  if (gpId) {
+  for (const gpId of gpIds) {
     const [gpUser] = await conn.execute('SELECT user_id FROM gps WHERE id = ?', [gpId]);
     if (gpUser.length) {
       participants.push({ userId: gpUser[0].user_id, role: 'gp' });
@@ -49,20 +49,25 @@ const syncParticipants = async (conn, conferenceId, gpId, ahpIds, isNew) => {
 };
 
 exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUserId) => {
-  const [appointments] = await conn.execute(
-    `SELECT a.*, aa.ahp_id AS linked_ahp_id
-     FROM appointments a
-     LEFT JOIN appointment_ahps aa ON aa.appointment_id = a.id
-     WHERE a.id = ?`,
-    [appointmentId]
-  );
+  const [appointments] = await conn.execute('SELECT * FROM appointments WHERE id = ?', [appointmentId]);
 
   if (!appointments.length) return null;
 
   const appointment = appointments[0];
-  const ahpIds = [...new Set(
-    appointments.map((row) => row.linked_ahp_id).filter(Boolean)
-  )];
+
+  const [gpRows] = await conn.execute(
+    'SELECT gp_id FROM appointment_gps WHERE appointment_id = ? ORDER BY id',
+    [appointmentId]
+  );
+  const gpIds = [...new Set(gpRows.map((row) => row.gp_id).filter(Boolean))];
+  if (!gpIds.length && appointment.gp_id) gpIds.push(appointment.gp_id);
+  const primaryGpId = gpIds[0] || null;
+
+  const [ahpRows] = await conn.execute(
+    'SELECT ahp_id FROM appointment_ahps WHERE appointment_id = ? ORDER BY id',
+    [appointmentId]
+  );
+  const ahpIds = [...new Set(ahpRows.map((row) => row.ahp_id).filter(Boolean))];
   const firstAhpId = ahpIds[0] || appointment.ahp_id || null;
   const notes = [
     appointment.title ? `Title: ${appointment.title}` : null,
@@ -89,7 +94,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
        WHERE id = ?`,
       [
         appointment.patient_id,
-        appointment.gp_id,
+        primaryGpId,
         firstAhpId,
         appointment.appointment_date,
         appointment.appointment_time,
@@ -99,7 +104,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
       ]
     );
 
-    await syncParticipants(conn, conferenceId, appointment.gp_id, ahpIds, false);
+    await syncParticipants(conn, conferenceId, gpIds, ahpIds, false);
     return conferenceId;
   }
 
@@ -116,7 +121,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
       conferenceCode,
       appointmentId,
       appointment.patient_id,
-      appointment.gp_id,
+      primaryGpId,
       firstAhpId,
       appointment.appointment_date,
       appointment.appointment_time,
@@ -127,7 +132,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
     ]
   );
 
-  await syncParticipants(conn, result.insertId, appointment.gp_id, ahpIds, true);
+  await syncParticipants(conn, result.insertId, gpIds, ahpIds, true);
   return result.insertId;
 };
 

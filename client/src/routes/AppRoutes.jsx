@@ -94,7 +94,7 @@ const AppRoutes = () => (
             <Route path="/join-time-report" element={<JoinTimeReport />} />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST]} />}>
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.ADMIN]} />}>
             <Route path="/appointments" element={<Appointments />} />
           </Route>
 
@@ -107,9 +107,12 @@ const AppRoutes = () => (
           </Route>
         </Route>
 
-        <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST]} />}>
-          <Route path="/appointments/:appointmentId/files/:fileId/preview" element={<AppointmentFilePreview />} />
-        </Route>
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.ADMIN]} />}>
+            <Route path="/appointments/:appointmentId/files/:fileId/preview" element={<AppointmentFilePreview />} />
+          </Route>
+          <Route element={<ProtectedRoute allowedRoles={[ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.GP, ROLES.AHP, ROLES.SUPER_ADMIN]} />}>
+            <Route path="/tasks/:taskId/files/:fileId/preview" element={<AppointmentFilePreview />} />
+          </Route>
       </Route>
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

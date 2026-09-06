@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField,
-  Grid, MenuItem, Box, Typography, Divider, Stack, Alert,
+  Grid, Box, Typography, Divider, Stack, Alert,
 } from '@mui/material';
 import { AdminPanelSettings, LockReset } from '@mui/icons-material';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import { toast } from 'react-toastify';
 import PageHeader from '../../components/PageHeader';
@@ -12,8 +12,10 @@ import DataTable from '../../components/DataTable';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import api from '../../services/api';
 import { adminUpsertSchema, adminPasswordResetSchema } from '../../utils/formSchemas';
-import { getFieldPlaceholder, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
+import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { handleFormDialogClose } from '../../components/PremiumFormFields';
+import PasswordTextField from '../../components/PasswordReveal';
+import AccountStatusToggle from '../../components/AccountStatusToggle';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
 
 const AdminManagement = () => {
@@ -214,10 +216,10 @@ const AdminManagement = () => {
               {!editRow && (
                 <>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField fullWidth required label="Password" type="password" placeholder={getFieldPlaceholder('password', { type: 'password' })} {...register('password')} error={!!errors.password} helperText={errors.password?.message || 'Minimum 8 characters — admin uses this to log in'} />
+                    <PasswordTextField fullWidth required label="Password" placeholder={getFieldPlaceholder('password', { type: 'password' })} {...register('password')} error={!!errors.password} helperText={errors.password?.message || 'Minimum 8 characters — admin uses this to log in'} />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField fullWidth required label="Confirm Password" type="password" placeholder={getFieldPlaceholder('confirmPassword', { type: 'password' })} {...register('confirmPassword')} error={!!errors.confirmPassword} helperText={errors.confirmPassword?.message} />
+                    <PasswordTextField fullWidth required label="Confirm Password" placeholder={getFieldPlaceholder('confirmPassword', { type: 'password' })} {...register('confirmPassword')} error={!!errors.confirmPassword} helperText={errors.confirmPassword?.message} />
                   </Grid>
                 </>
               )}
@@ -229,34 +231,20 @@ const AdminManagement = () => {
                     <Typography variant="caption" color="text.secondary">Leave blank to keep the current password unchanged.</Typography>
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField fullWidth label="New Password" type="password" placeholder={getFieldPlaceholder('newPassword', { type: 'password' })} {...register('newPassword')} error={!!errors.newPassword} helperText={errors.newPassword?.message} />
+                    <PasswordTextField fullWidth label="New Password" placeholder={getFieldPlaceholder('newPassword', { type: 'password' })} {...register('newPassword')} error={!!errors.newPassword} helperText={errors.newPassword?.message} />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField fullWidth label="Confirm New Password" type="password" placeholder={getFieldPlaceholder('confirmNewPassword', { type: 'password' })} {...register('confirmNewPassword')} error={!!errors.confirmNewPassword} helperText={errors.confirmNewPassword?.message} />
+                    <PasswordTextField fullWidth label="Confirm New Password" placeholder={getFieldPlaceholder('confirmNewPassword', { type: 'password' })} {...register('confirmNewPassword')} error={!!errors.confirmNewPassword} helperText={errors.confirmNewPassword?.message} />
                   </Grid>
                 </>
               )}
               <Grid size={{ xs: 12 }}>
-                <Controller
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Account Status</Typography>
+                <AccountStatusToggle
                   name="status"
                   control={control}
-                  render={({ field }) => (
-                    <TextField
-                      fullWidth
-                      select
-                      required={!!editRow}
-                      label="Status"
-                      value={field.value ?? 'active'}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      error={!!errors.status}
-                      helperText={errors.status?.message}
-                      slotProps={{ select: { MenuProps: selectMenuSlotProps } }}
-                    >
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="inactive">Inactive</MenuItem>
-                      {editRow && <MenuItem value="disabled">Disabled</MenuItem>}
-                    </TextField>
-                  )}
+                  error={!!errors.status}
+                  helperText={errors.status?.message}
                 />
               </Grid>
             </Grid>
@@ -279,15 +267,15 @@ const AdminManagement = () => {
               Set a new password for <strong>{resetTarget?.email}</strong>. Existing passwords cannot be retrieved.
             </Typography>
             <Stack spacing={2}>
-              <TextField
-                fullWidth required label="New Password" type="password"
+              <PasswordTextField
+                fullWidth required label="New Password"
                 placeholder={getFieldPlaceholder('newPassword', { type: 'password' })}
                 {...resetPasswordForm.register('password')}
                 error={!!resetPasswordForm.formState.errors.password}
                 helperText={resetPasswordForm.formState.errors.password?.message}
               />
-              <TextField
-                fullWidth required label="Confirm Password" type="password"
+              <PasswordTextField
+                fullWidth required label="Confirm Password"
                 placeholder={getFieldPlaceholder('confirmPassword', { type: 'password' })}
                 {...resetPasswordForm.register('confirmPassword')}
                 error={!!resetPasswordForm.formState.errors.confirmPassword}

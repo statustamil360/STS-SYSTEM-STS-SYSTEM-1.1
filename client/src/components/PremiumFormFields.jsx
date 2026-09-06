@@ -8,6 +8,7 @@ import {
   selectMenuSlotProps,
   SELECT_PLACEHOLDER,
 } from '../utils/fieldPlaceholders';
+import { PasswordRevealAdornment, usePasswordReveal } from './PasswordReveal';
 
 export { SELECT_PLACEHOLDER, selectMenuSlotProps } from '../utils/fieldPlaceholders';
 
@@ -286,13 +287,31 @@ const TextFieldCore = ({
   const isMultiline = Boolean(multiline);
   const isRequired = required || Boolean(registerOptions?.required);
   const resolvedPlaceholder = placeholder ?? getFieldPlaceholder(name, { type, label });
+  const isPassword = type === 'password';
+  const reveal = usePasswordReveal(defaultValue);
+
+  const handleChange = (event) => {
+    if (isPassword) reveal.onValueChange(event.target.value);
+    registerProps.onChange?.(event);
+  };
+
+  const passwordEndAdornment = isPassword
+    ? (
+      <PasswordRevealAdornment
+        hasValue={reveal.hasValue}
+        visible={reveal.visible}
+        onToggle={() => reveal.setVisible((prev) => !prev)}
+        extra={endAdornment}
+      />
+    )
+    : endAdornment;
 
   return (
     <TextField
       fullWidth
       size="small"
       label={label}
-      type={type || 'text'}
+      type={isPassword ? (reveal.visible ? 'text' : 'password') : (type || 'text')}
       multiline={multiline}
       rows={rows}
       defaultValue={defaultValue}
@@ -302,6 +321,7 @@ const TextFieldCore = ({
       placeholder={resolvedPlaceholder}
       disabled={disabled}
       {...registerProps}
+      onChange={handleChange}
       sx={isMultiline ? multilineFieldSx : fieldSx}
       slotProps={{
         inputLabel: (shrink || type === 'date' || type === 'time') ? { shrink: true } : undefined,
@@ -312,7 +332,7 @@ const TextFieldCore = ({
               <Icon sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
             </InputAdornment>
           ) : undefined,
-          endAdornment,
+          endAdornment: passwordEndAdornment,
         },
       }}
     />

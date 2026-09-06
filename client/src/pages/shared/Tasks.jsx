@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  Dialog, DialogContent, Grid, MenuItem, Box, TextField, InputAdornment, Typography, Chip, Stack,
+  Dialog, DialogContent, DialogActions, Grid, MenuItem, Box, TextField, InputAdornment, Typography, Chip, Stack,
+  Button, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton,
 } from '@mui/material';
 import {
   TaskAltOutlined, NotesOutlined, PersonOutlined, CalendarTodayOutlined,
   FlagOutlined, CheckCircleOutlined, BadgeOutlined, ScheduleOutlined,
-  AutorenewOutlined, EventAvailableOutlined,
+  AutorenewOutlined, EventAvailableOutlined, DeleteOutlined, FolderOutlined,
+  InsertDriveFileOutlined, DownloadOutlined,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { useForm, Controller } from 'react-hook-form';
@@ -24,12 +27,15 @@ import useSystemDateTime from '../../hooks/useSystemDateTime';
 import useRolePermissions from '../../hooks/useRolePermissions';
 import { TASK_PRIORITY, TASK_STATUS, ROLE_LABELS, ROLES } from '../../utils/constants';
 import { buildTaskPayload } from '../../utils/crudHelpers';
+import { openTaskFilePreview, downloadTaskFile } from '../../utils/filePreview';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
+import FileDropZone from '../../components/FileDropZone';
+import { refreshNotificationBadge } from '../../utils/notificationRefresh';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
 const ASSIGNABLE_ROLE_ORDER = [ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP];
-
+const TASK_TABS = ['inbox', 'assigned'];
 const STATUS_META = {
   pending: { icon: ScheduleOutlined, color: 'warning', hint: 'Not started yet' },
   in_progress: { icon: AutorenewOutlined, color: 'info', hint: 'Currently working on it' },
@@ -159,12 +165,57 @@ const StatusOptionCard = ({ status, selected, onSelect }) => {
   );
 };
 
+const TaskFileAttach = ({
+  selectedFiles,
+  setSelectedFiles,
+  existingFiles,
+  onRemoveExisting,
+  onViewExisting,
+}) => (
+  <Grid size={{ xs: 12 }}>
+    <FileDropZone
+      selectedFiles={selectedFiles}
+      onAddFiles={(files) => setSelectedFiles((prev) => [...prev, ...files])}
+      onRemoveSelected={(idx) => setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))}
+    >
+      {existingFiles.length > 0 && (
+        <List dense sx={{ mt: 0.5, bgcolor: 'background.paper', borderRadius: 2 }}>
+          {existingFiles.map((file) => (
+            <ListItem key={file.id} divider>
+              <ListItemText
+                primary={file.original_name}
+                secondary={file.file_size ? `${Math.round(file.file_size / 1024)} KB` : 'Attached file'}
+              />
+              <ListItemSecondaryAction>
+                <Button size="small" onClick={() => onViewExisting(file.id)} sx={{ mr: 1 }}>
+                  View
+                </Button>
+                <IconButton
+                  edge="end"
+                  size="small"
+                  color="error"
+                  onClick={() => onRemoveExisting(file.id)}
+                >
+                  <DeleteOutlined fontSize="small" />
+                </IconButton>
+              </ListItemSecondaryAction>
+            </ListItem>
+          ))}
+        </List>
+      )}
+    </FileDropZone>
+  </Grid>
+);
+
 const Tasks = () => {
-  const { formatDate } = useSystemDateTime();
-  const { canEdit, canDelete } = useRolePermissions();
+  const { formatDate, formatDateTime } = useSystemDateTime();
+  const { canCreate, canEdit, canDelete } = useRolePermissions('tasks');
   const { user } = useSelector((state) => state.auth);
-  const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
-  const canManage = !isClinical;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const activeTab = TASK_TABS.includes(requestedTab) ? requestedTab : 'inbox';
+  const isAssignedTab = activeTab === 'assigned';
+
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
@@ -174,12 +225,18 @@ const Tasks = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [assignableUsers, setAssignableUsers] = useState([]);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [existingFiles, setExistingFiles] = useState([]);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewData, setViewData] = useState(null);
   const {
     register, handleSubmit, reset, control, watch, setValue, formState: { errors },
   } = useForm({
     defaultValues: {
       title: '',
       description: '',
+      task_update: '',
       assigned_role: '',
       assigned_to: '',
       due_date: '',
@@ -189,20 +246,28 @@ const Tasks = () => {
   });
 
   const selectedRole = watch('assigned_role');
+  const progressOnly = Boolean(editRow && !isAssignedTab);
+
+  useEffect(() => {
+    if (!TASK_TABS.includes(requestedTab)) {
+      setSearchParams({ tab: 'inbox' }, { replace: true });
+    }
+  }, [requestedTab, setSearchParams]);
 
   const roleOptions = useMemo(() => {
     const present = new Set(assignableUsers.map((u) => u.role));
     return ASSIGNABLE_ROLE_ORDER.filter((role) => present.has(role));
   }, [assignableUsers]);
 
-  const usersForRole = useMemo(
-    () => (selectedRole ? assignableUsers.filter((u) => u.role === selectedRole) : []),
-    [assignableUsers, selectedRole]
-  );
+  const usersForRole = useMemo(() => {
+    const list = selectedRole ? assignableUsers.filter((u) => u.role === selectedRole) : [];
+    return isAssignedTab ? list.filter((u) => Number(u.id) !== Number(user?.id)) : list;
+  }, [assignableUsers, selectedRole, isAssignedTab, user?.id]);
 
   const fetchTasks = useCallback(async ({ page: pageNum, limit }) => {
     const { data } = await api.get('/tasks', {
       params: {
+        scope: activeTab,
         search: search || undefined,
         status: statusFilter || undefined,
         priority: priorityFilter || undefined,
@@ -211,7 +276,7 @@ const Tasks = () => {
       },
     });
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [search, statusFilter, priorityFilter]);
+  }, [activeTab, search, statusFilter, priorityFilter]);
 
   const {
     rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
@@ -222,35 +287,104 @@ const Tasks = () => {
   }, [error]);
 
   useEffect(() => {
-    if (canManage) {
-      api.get('/staff/assignable-users')
-        .then(({ data }) => setAssignableUsers(data.data ?? []))
-        .catch(() => {});
-    }
-  }, [canManage]);
+    api.get('/staff/assignable-users')
+      .then(({ data }) => setAssignableUsers(data.data ?? []))
+      .catch(() => {});
+  }, []);
 
-  const handleOpen = (row = null) => {
-    setEditRow(row);
-    const assignedUser = row
-      ? assignableUsers.find((u) => String(u.id) === String(row.assigned_to))
+  useEffect(() => {
+    let lastInbox = null;
+    let lastAssigned = null;
+    const checkUnread = () => {
+      api.get('/tasks/unread-count')
+        .then(({ data }) => {
+          const inboxCount = Number(data.inboxCount ?? data.count) || 0;
+          const assignedCount = Number(data.assignedUpdateCount) || 0;
+          if (!isAssignedTab && lastInbox != null && inboxCount > lastInbox) reload();
+          if (isAssignedTab && lastAssigned != null && assignedCount > lastAssigned) reload();
+          lastInbox = inboxCount;
+          lastAssigned = assignedCount;
+        })
+        .catch(() => {});
+    };
+    const timer = window.setInterval(checkUnread, 12000);
+    return () => window.clearInterval(timer);
+  }, [isAssignedTab, reload]);
+
+  const handleOpen = async (row = null) => {
+    setSelectedFiles([]);
+    setExistingFiles([]);
+    let detail = row;
+    if (row?.id) {
+      try {
+        const { data } = await api.get(`/tasks/${row.id}`);
+        detail = data.data;
+        setExistingFiles(detail.files || []);
+      } catch {
+        toast.error('Failed to load task details');
+        return;
+      }
+    }
+
+    setEditRow(detail);
+    const assignedUser = detail
+      ? assignableUsers.find((u) => String(u.id) === String(detail.assigned_to))
       : null;
-    reset(row ? {
-      title: row.title,
-      description: row.description || '',
+    reset(detail ? {
+      title: detail.title,
+      description: detail.description || '',
+      task_update: '',
       assigned_role: assignedUser?.role || '',
-      assigned_to: row.assigned_to != null ? String(row.assigned_to) : '',
-      due_date: row.due_date ? row.due_date.slice(0, 10) : '',
-      priority: row.priority || 'medium',
-      status: row.status || 'pending',
+      assigned_to: detail.assigned_to != null ? String(detail.assigned_to) : '',
+      due_date: detail.due_date ? String(detail.due_date).slice(0, 10) : '',
+      priority: detail.priority || 'medium',
+      status: detail.status || 'pending',
     } : {
-      title: '', description: '', assigned_role: '', assigned_to: '', due_date: '', priority: 'medium', status: 'pending',
+      title: '',
+      description: '',
+      task_update: '',
+      assigned_role: isAssignedTab ? '' : (user?.role || ''),
+      assigned_to: isAssignedTab ? '' : String(user?.id || ''),
+      due_date: '',
+      priority: 'medium',
+      status: 'pending',
     });
     setOpen(true);
+  };
+
+  const handleView = async (row) => {
+    setViewOpen(true);
+    setViewLoading(true);
+    setViewData(null);
+    try {
+      const { data } = await api.get(`/tasks/${row.id}`);
+      setViewData(data.data);
+      await api.post(`/tasks/${row.id}/assigner-read`).catch(() => {});
+      reload();
+      window.dispatchEvent(new CustomEvent('tasks:inbox-refresh'));
+      refreshNotificationBadge();
+    } catch {
+      toast.error('Failed to load task details');
+      setViewOpen(false);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const handleDownloadFile = async (file) => {
+    if (!viewData?.id) return;
+    try {
+      await downloadTaskFile(viewData.id, file.id, file.original_name);
+    } catch {
+      toast.error('Failed to download file');
+    }
   };
 
   const handleCloseForm = () => {
     setOpen(false);
     setEditRow(null);
+    setSelectedFiles([]);
+    setExistingFiles([]);
   };
 
   const onInvalid = (formErrors) => {
@@ -258,19 +392,38 @@ const Tasks = () => {
     toast.error(firstError?.message || 'Please complete all required fields');
   };
 
+  const sendTask = async (payload, isEdit) => {
+    if (selectedFiles.length) {
+      const form = new FormData();
+      Object.entries(payload).forEach(([key, val]) => {
+        form.append(key, val == null ? '' : String(val));
+      });
+      selectedFiles.forEach((file) => form.append('files', file));
+      if (isEdit) await api.put(`/tasks/${editRow.id}`, form);
+      else await api.post('/tasks', form);
+      return;
+    }
+    if (isEdit) await api.put(`/tasks/${editRow.id}`, payload);
+    else await api.post('/tasks', payload);
+  };
+
   const onSubmit = async (formData) => {
     setSubmitting(true);
     try {
-      const payload = buildTaskPayload(formData, { editRow, isClinical });
-      if (editRow) {
-        await api.put(`/tasks/${editRow.id}`, payload);
-        toast.success('Task updated successfully');
-      } else {
-        await api.post('/tasks', payload);
-        toast.success('Task created successfully');
-        setPage(0);
+      const payload = buildTaskPayload(formData, {
+        editRow,
+        progressOnly,
+        assignToSelf: !isAssignedTab,
+        userId: user?.id,
+      });
+      if (isAssignedTab && !progressOnly && !payload.assigned_to) {
+        toast.error('Assignee is required');
+        return;
       }
+      await sendTask(payload, Boolean(editRow));
+      toast.success(editRow ? 'Task updated successfully' : 'Task created successfully');
       handleCloseForm();
+      if (!editRow) setPage(0);
       reload();
     } catch (err) { toast.error(err.response?.data?.message || 'Operation failed'); }
     finally { setSubmitting(false); }
@@ -296,13 +449,53 @@ const Tasks = () => {
     }
   };
 
-  const columns = [
-    { field: 'title', headerName: 'Title' },
-    { field: 'assigned_to_name', headerName: 'Assigned To' },
-    { field: 'due_date', headerName: 'Due Date', render: (r) => (r.due_date ? formatDate(r.due_date) : '—') },
-    { field: 'priority', headerName: 'Priority', type: 'status' },
-    { field: 'status', headerName: 'Status', type: 'status' },
-  ];
+  const handleRemoveExistingFile = async (fileId) => {
+    if (!editRow?.id) return;
+    try {
+      await api.delete(`/tasks/${editRow.id}/files/${fileId}`);
+      setExistingFiles((prev) => prev.filter((file) => file.id !== fileId));
+      toast.success('File removed');
+    } catch {
+      toast.error('Failed to remove file');
+    }
+  };
+
+  const isUnreadTask = (row) => (
+    isAssignedTab ? !row.assigner_read_at : !row.assignee_read_at
+  );
+
+  const renderTitle = (row) => {
+    const unread = isUnreadTask(row);
+    return (
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 0.75 }}>
+        <Typography variant="body2" sx={{ fontWeight: unread ? 700 : 500 }}>
+          {row.title || '—'}
+        </Typography>
+        <Chip
+          label={unread ? 'Unread' : 'Read'}
+          size="small"
+          color={unread ? 'primary' : 'default'}
+          sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
+        />
+      </Stack>
+    );
+  };
+
+  const columns = isAssignedTab
+    ? [
+      { field: 'title', headerName: 'Title', render: renderTitle },
+      { field: 'assigned_to_name', headerName: 'Assigned To' },
+      { field: 'due_date', headerName: 'Due Date', render: (r) => (r.due_date ? formatDate(r.due_date) : '—') },
+      { field: 'priority', headerName: 'Priority', type: 'status' },
+      { field: 'status', headerName: 'Status', type: 'status' },
+    ]
+    : [
+      { field: 'title', headerName: 'Title', render: renderTitle },
+      { field: 'assigned_by_name', headerName: 'Assigned By' },
+      { field: 'due_date', headerName: 'Due Date', render: (r) => (r.due_date ? formatDate(r.due_date) : '—') },
+      { field: 'priority', headerName: 'Priority', type: 'status' },
+      { field: 'status', headerName: 'Status', type: 'status' },
+    ];
 
   const taskFilters = [
     {
@@ -330,7 +523,7 @@ const Tasks = () => {
   return (
     <>
       <DataTable
-        title={isClinical ? 'My Tasks' : 'Task List'}
+        title={isAssignedTab ? 'Assigned by Me' : 'Assigned to Me'}
         columns={columns}
         rows={rows}
         loading={loading}
@@ -341,13 +534,15 @@ const Tasks = () => {
         onPageChange={setPage}
         onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
         onSearch={(v) => { setSearch(v); setPage(0); }}
-        searchPlaceholder="Search by title or assignee..."
+        searchPlaceholder={isAssignedTab ? 'Search by title or assignee...' : 'Search by title or assigned by...'}
         filters={taskFilters}
-        actionLabel={canManage ? 'Create Task' : undefined}
-        onAction={canManage ? () => handleOpen() : undefined}
+        actionLabel={canCreate ? (isAssignedTab ? 'Assign Task' : 'Create Task') : undefined}
+        onAction={canCreate ? () => handleOpen() : undefined}
+        onView={handleView}
         onEdit={canEdit ? handleOpen : undefined}
-        onDelete={canManage && canDelete ? handleDelete : undefined}
+        onDelete={canDelete ? handleDelete : undefined}
         actions
+        isRowHighlighted={isUnreadTask}
       />
 
       <Dialog
@@ -361,23 +556,26 @@ const Tasks = () => {
         <PremiumDialogHeader
           icon={TaskAltOutlined}
           title={editRow
-            ? (isClinical ? 'Update Task Status' : 'Edit Task')
-            : 'Create Task'}
+            ? (progressOnly ? 'Update Task Status' : 'Edit Task')
+            : (isAssignedTab ? 'Assign Task' : 'Create Task')}
           subtitle={editRow
-            ? (isClinical
+            ? (progressOnly
               ? 'Review your assigned task and update its progress status'
-              : 'Update task details, priority, and status')
-            : 'Assign and track operational or clinical tasks across staff'}
+              : 'Update task details, priority, and attachments')
+            : (isAssignedTab
+              ? 'Assign a task to another staff member and attach supporting files'
+              : 'Create a task for yourself and attach supporting files')}
         />
         <Box
-          key={editRow?.id ?? 'new'}
+          key={`${editRow?.id ?? 'new'}-${activeTab}`}
           component="form"
+          noValidate
           onSubmit={handleSubmit(onSubmit, onInvalid)}
           sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         >
           <DialogContent dividers sx={dialogContentSx}>
             <SectionCard title="Task Information" icon={TaskAltOutlined}>
-              {isClinical && editRow ? (
+              {progressOnly ? (
                 <>
                   <Grid size={{ xs: 12 }}>
                     <Box
@@ -437,8 +635,8 @@ const Tasks = () => {
                   />
                   <MetaTile
                     icon={PersonOutlined}
-                    label="Assigned To"
-                    value={editRow.assigned_to_name?.trim() || 'You'}
+                    label="Assigned By"
+                    value={editRow.assigned_by_name?.trim() || 'Staff'}
                   />
 
                   <Grid size={{ xs: 12 }}>
@@ -476,8 +674,8 @@ const Tasks = () => {
 
                   <Grid size={{ xs: 12 }}>
                     <IconField
-                      label="Progress Notes"
-                      name="description"
+                      label="Task Update"
+                      name="task_update"
                       multiline
                       rows={3}
                       icon={NotesOutlined}
@@ -509,7 +707,7 @@ const Tasks = () => {
                   register={register}
                 />
               </Grid>
-              {canManage && (
+              {isAssignedTab && (
                 <>
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <Controller
@@ -583,7 +781,7 @@ const Tasks = () => {
                             || (!selectedRole
                               ? 'Select a role first'
                               : usersForRole.length === 0
-                                ? 'No active staff in this role'
+                                ? 'No other active staff in this role'
                                 : undefined)
                           }
                           sx={fieldSx}
@@ -661,14 +859,174 @@ const Tasks = () => {
               )}
                 </>
               )}
+              {!progressOnly && (
+                <TaskFileAttach
+                  selectedFiles={selectedFiles}
+                  setSelectedFiles={setSelectedFiles}
+                  existingFiles={existingFiles}
+                  onRemoveExisting={handleRemoveExistingFile}
+                  onViewExisting={(fileId) => openTaskFilePreview(editRow?.id, fileId)}
+                />
+              )}
             </SectionCard>
           </DialogContent>
           <FormDialogActions
             onCancel={handleCloseForm}
-            submitLabel={editRow ? (isClinical ? 'Update Status' : 'Update Task') : 'Create Task'}
+            submitLabel={editRow ? (progressOnly ? 'Update Status' : 'Update Task') : (isAssignedTab ? 'Assign Task' : 'Create Task')}
             loading={submitting}
           />
         </Box>
+      </Dialog>
+
+      <Dialog
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+        maxWidth="md"
+        fullWidth
+        scroll="paper"
+        slotProps={{ paper: { sx: dialogPaperSx } }}
+      >
+        <PremiumDialogHeader
+          icon={TaskAltOutlined}
+          title="Task Details"
+          subtitle="Assignment details and files sent with this task"
+        />
+        <DialogContent dividers sx={dialogContentSx}>
+          {viewLoading ? (
+            <Typography color="text.secondary" py={4} textAlign="center">Loading details...</Typography>
+          ) : viewData ? (
+            <>
+              <SectionCard title="Task Information" icon={TaskAltOutlined}>
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 700 }}>{viewData.title}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                    {viewData.description || 'No description provided'}
+                  </Typography>
+                </Grid>
+                <MetaTile
+                  icon={PersonOutlined}
+                  label="Assigned By"
+                  value={viewData.assigned_by_name?.trim() || '—'}
+                />
+                <MetaTile
+                  icon={PersonOutlined}
+                  label="Assigned To"
+                  value={viewData.assigned_to_name?.trim() || '—'}
+                />
+                <MetaTile
+                  icon={EventAvailableOutlined}
+                  label="Due Date"
+                  value={viewData.due_date ? formatDate(viewData.due_date) : 'No due date'}
+                />
+                <MetaTile
+                  icon={FlagOutlined}
+                  label="Priority"
+                  value={formatLabel(viewData.priority)}
+                  color={PRIORITY_COLOR[viewData.priority] || 'primary'}
+                />
+                <MetaTile
+                  icon={CheckCircleOutlined}
+                  label="Status"
+                  value={formatLabel(viewData.status)}
+                  color={STATUS_META[viewData.status]?.color || 'primary'}
+                />
+              </SectionCard>
+
+              <SectionCard title="Attached Files" icon={FolderOutlined}>
+                {viewData.files?.length ? (
+                  <Grid size={{ xs: 12 }}>
+                    <Stack spacing={1}>
+                      {viewData.files.map((file) => (
+                        <Stack
+                          key={file.id}
+                          direction="row"
+                          spacing={1.5}
+                          sx={{
+                            alignItems: 'center',
+                            p: 1.25,
+                            borderRadius: '12px',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: 'background.default',
+                          }}
+                        >
+                          <InsertDriveFileOutlined sx={{ fontSize: 20, color: 'primary.main', flexShrink: 0 }} />
+                          <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                              {file.original_name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {file.file_size ? `${Math.round(file.file_size / 1024)} KB` : 'Attached file'}
+                            </Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => openTaskFilePreview(viewData.id, file.id)}
+                          >
+                            View
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            startIcon={<DownloadOutlined />}
+                            onClick={() => handleDownloadFile(file)}
+                          >
+                            Download
+                          </Button>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Grid>
+                ) : (
+                  <Grid size={{ xs: 12 }}>
+                    <Typography color="text.secondary">No files were attached to this task.</Typography>
+                  </Grid>
+                )}
+              </SectionCard>
+
+              <SectionCard title="Task Updates" icon={NotesOutlined}>
+                {viewData.updates?.length ? (
+                  <Grid size={{ xs: 12 }}>
+                    <Stack spacing={1.25}>
+                      {viewData.updates.map((update) => (
+                        <Box
+                          key={update.id}
+                          sx={{
+                            p: 1.75,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.03),
+                          }}
+                        >
+                          <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between', mb: 0.75, flexWrap: 'wrap' }}>
+                            <Typography variant="caption" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                              {update.author_name || 'Staff'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {formatDateTime(update.created_at)}
+                            </Typography>
+                          </Stack>
+                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
+                            {update.message}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Grid>
+                ) : (
+                  <Grid size={{ xs: 12 }}>
+                    <Typography color="text.secondary">No task updates yet.</Typography>
+                  </Grid>
+                )}
+              </SectionCard>
+            </>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setViewOpen(false)} variant="contained">Close</Button>
+        </DialogActions>
       </Dialog>
 
       <ConfirmDialog

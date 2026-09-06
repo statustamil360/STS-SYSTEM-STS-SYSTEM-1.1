@@ -4,7 +4,7 @@ const { allocatePatientCode } = require('../utils/patientId');
 exports.getAll = async (req, res, next) => {
   try {
     const {
-      search, status, gender, has_medical_id, has_mobile, has_insurance,
+      search, status, gender, has_insurance, assigned_gp_id,
       sortBy = 'id', sortOrder = 'desc', page = 1, limit = 10,
     } = req.query;
     const offset = (page - 1) * limit;
@@ -24,16 +24,26 @@ exports.getAll = async (req, res, next) => {
     }
 
     if (search) {
-      query += ` AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.patient_code LIKE ? OR p.nic LIKE ?
-        OR p.phone LIKE ? OR p.land_phone LIKE ? OR p.email LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      const tokens = String(search).trim().split(/\s+/).filter(Boolean);
+      tokens.forEach((token) => {
+        const like = `%${token}%`;
+        query += ` AND (
+          p.first_name LIKE ? OR p.last_name LIKE ?
+          OR CONCAT(p.first_name, ' ', p.last_name) LIKE ?
+          OR p.patient_code LIKE ? OR p.nic LIKE ?
+          OR p.phone LIKE ? OR p.land_phone LIKE ? OR p.email LIKE ?
+        )`;
+        params.push(like, like, like, like, like, like, like, like);
+      });
     }
     if (status) { query += ' AND p.status = ?'; params.push(status); }
     if (gender) { query += ' AND p.gender = ?'; params.push(gender); }
-    if (has_medical_id === 'yes') { query += " AND p.nic IS NOT NULL AND p.nic != ''"; }
-    if (has_medical_id === 'no') { query += " AND (p.nic IS NULL OR p.nic = '')"; }
-    if (has_mobile === 'yes') { query += " AND p.phone IS NOT NULL AND p.phone != ''"; }
-    if (has_mobile === 'no') { query += " AND (p.phone IS NULL OR p.phone = '')"; }
+    if (assigned_gp_id === 'unassigned') {
+      query += ' AND p.assigned_gp_id IS NULL';
+    } else if (assigned_gp_id) {
+      query += ' AND p.assigned_gp_id = ?';
+      params.push(assigned_gp_id);
+    }
     if (has_insurance === 'yes') { query += " AND p.insurance IS NOT NULL AND p.insurance != ''"; }
     if (has_insurance === 'no') { query += " AND (p.insurance IS NULL OR p.insurance = '')"; }
 
@@ -43,6 +53,7 @@ exports.getAll = async (req, res, next) => {
       nic: 'p.nic',
       phone: 'p.phone',
       gender: 'p.gender',
+      dob: 'p.dob',
       id: 'p.id',
       created_at: 'p.created_at',
     };

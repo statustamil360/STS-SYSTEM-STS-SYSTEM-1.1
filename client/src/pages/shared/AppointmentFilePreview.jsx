@@ -40,7 +40,10 @@ const resolvePreviewMode = (mimeType, fileName) => {
 
 const AppointmentFilePreview = () => {
   const theme = useTheme();
-  const { appointmentId, fileId } = useParams();
+  const { appointmentId, taskId, fileId } = useParams();
+  const fileUrl = appointmentId
+    ? `/appointments/${appointmentId}/files/${fileId}/view`
+    : `/tasks/${taskId}/files/${fileId}/view`;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [fileName, setFileName] = useState('');
@@ -58,7 +61,7 @@ const AppointmentFilePreview = () => {
       setError('');
       try {
         const { data, headers } = await api.get(
-          `/appointments/${appointmentId}/files/${fileId}/view`,
+          fileUrl,
           { responseType: 'blob' }
         );
 
@@ -114,7 +117,7 @@ const AppointmentFilePreview = () => {
       active = false;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [appointmentId, fileId]);
+  }, [appointmentId, taskId, fileId, fileUrl]);
 
   useEffect(() => () => {
     if (objectUrl) URL.revokeObjectURL(objectUrl);

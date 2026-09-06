@@ -79,11 +79,12 @@ export const buildPatientPayload = (formData) => ({
   assigned_ahp_id: formData.assigned_ahp_id ? Number(formData.assigned_ahp_id) : null,
 });
 
-export const buildTaskPayload = (formData, { editRow, isClinical }) => {
-  if (isClinical && editRow) {
+export const buildTaskPayload = (formData, { editRow, progressOnly, assignToSelf, userId }) => {
+  if (progressOnly && editRow) {
     return {
       status: formData.status || editRow.status,
-      description: emptyToNull(formData.description),
+      task_update: emptyToNull(formData.task_update),
+      status_only: true,
     };
   }
 
@@ -98,7 +99,9 @@ export const buildTaskPayload = (formData, { editRow, isClinical }) => {
     payload.status = formData.status || editRow.status;
   }
 
-  if (!isClinical) {
+  if (assignToSelf) {
+    payload.assigned_to = Number(userId);
+  } else if (formData.assigned_to) {
     payload.assigned_to = Number(formData.assigned_to);
   } else if (editRow?.assigned_to) {
     payload.assigned_to = Number(editRow.assigned_to);

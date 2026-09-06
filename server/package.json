@@ -13,6 +13,9 @@
     "migrate:appointment-ids": "node database/migrate-appointment-ids.js",
     "migrate:conference-ids": "node database/migrate-conference-ids.js",
     "migrate:clinical-reports": "node database/migrate-clinical-reports.js",
+    "migrate:receptionist-permissions": "node database/migrate-receptionist-permissions.js",
+    "migrate:appointment-gps": "node database/migrate-appointment-gps.js",
+    "migrate:task-files": "node database/migrate-task-files.js",
     "seed:demo-meetings": "node database/seed-demo-meetings.js"
   },
   "keywords": [],

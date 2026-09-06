@@ -5,31 +5,47 @@ const path = require('path');
 const { uploadDir } = require('../config/jwt');
 const { syncConferenceFromAppointment, cancelConferenceForAppointment, deleteConferenceForAppointment } = require('../services/conferenceSync');
 const { processTimedOutConferences } = require('../services/conferenceTimeoutService');
+const { parseArrayField, parseGpIds } = require('../utils/appointmentAssignments');
 
-const parseAhpAssignments = (raw) => {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+const parseAhpAssignments = parseArrayField;
+
+const replaceGpAssignments = async (conn, appointmentId, gpIds) => {
+  await conn.execute('DELETE FROM appointment_gps WHERE appointment_id = ?', [appointmentId]);
+  for (const gpId of gpIds) {
+    await conn.execute(
+      'INSERT INTO appointment_gps (appointment_id, gp_id) VALUES (?, ?)',
+      [appointmentId, gpId]
+    );
   }
 };
 
 const validateAhpAssignments = (assignments) => {
-  const seen = new Set();
+  const seenPairs = new Set();
+  const seenAhps = new Set();
   for (const item of assignments) {
     if (!item.profession || !item.ahp_id) {
       return 'Each AHP row must have both profession and AHP selected';
     }
-    const key = `${String(item.profession).trim().toLowerCase()}::${item.ahp_id}`;
-    if (seen.has(key)) {
+    const ahpId = String(item.ahp_id);
+    if (seenAhps.has(ahpId)) {
+      return 'The same AHP cannot be added twice in one appointment';
+    }
+    seenAhps.add(ahpId);
+    const key = `${String(item.profession).trim().toLowerCase()}::${ahpId}`;
+    if (seenPairs.has(key)) {
       return 'The same profession and AHP cannot be added twice in one appointment';
     }
-    seen.add(key);
+    seenPairs.add(key);
   }
   return null;
+};
+
+const DATE_SCOPES = {
+  today: 'a.appointment_date = CURDATE()',
+  tomorrow: 'a.appointment_date = CURDATE() + INTERVAL 1 DAY',
+  week: 'YEARWEEK(a.appointment_date, 1) = YEARWEEK(CURDATE(), 1)',
+  month: 'YEAR(a.appointment_date) = YEAR(CURDATE()) AND MONTH(a.appointment_date) = MONTH(CURDATE())',
+  year: 'YEAR(a.appointment_date) = YEAR(CURDATE())',
 };
 
 const appointmentSelectBase = `
@@ -40,6 +56,17 @@ const appointmentSelectBase = `
     g.gp_code,
     (
       SELECT GROUP_CONCAT(
+        TRIM(CONCAT(COALESCE(a_gp_p.first_name, ''), ' ', COALESCE(a_gp_p.last_name, '')))
+        ORDER BY ag.id SEPARATOR '; '
+      )
+      FROM appointment_gps ag
+      JOIN gps a_gp ON ag.gp_id = a_gp.id
+      JOIN users a_gp_u ON a_gp.user_id = a_gp_u.id
+      LEFT JOIN user_profiles a_gp_p ON a_gp_p.user_id = a_gp_u.id
+      WHERE ag.appointment_id = a.id
+    ) AS gp_summary,
+    (
+      SELECT GROUP_CONCAT(
         CONCAT(aa.profession, ': ', TRIM(CONCAT(ahp_p.first_name, ' ', ahp_p.last_name)))
         ORDER BY aa.id SEPARATOR '; '
       )
@@ -48,12 +75,18 @@ const appointmentSelectBase = `
       JOIN users ah_u ON ah.user_id = ah_u.id
       LEFT JOIN user_profiles ahp_p ON ahp_p.user_id = ah_u.id
       WHERE aa.appointment_id = a.id
-    ) AS ahp_summary
+    ) AS ahp_summary,
+    COALESCE(
+      NULLIF(TRIM(CONCAT(COALESCE(cb_p.first_name, ''), ' ', COALESCE(cb_p.last_name, ''))), ''),
+      cb.username
+    ) AS assigned_by_name
   FROM appointments a
   JOIN patients p ON a.patient_id = p.id
   LEFT JOIN gps g ON a.gp_id = g.id
   LEFT JOIN users gp_u ON g.user_id = gp_u.id
   LEFT JOIN user_profiles gp_p ON gp_p.user_id = gp_u.id
+  LEFT JOIN users cb ON cb.id = a.created_by
+  LEFT JOIN user_profiles cb_p ON cb_p.user_id = cb.id
 `;
 
 const fetchLinkedConference = async (appointmentId) => {
@@ -93,6 +126,15 @@ const fetchAppointmentDetails = async (id) => {
   const [rows] = await pool.execute(`${appointmentSelectBase} WHERE a.id = ?`, [id]);
   if (!rows.length) return null;
 
+  const [gpRows] = await pool.execute(
+    `SELECT ag.gp_id, g.gp_code,
+       TRIM(CONCAT(COALESCE(gp_p.first_name, ''), ' ', COALESCE(gp_p.last_name, ''))) AS gp_name
+     FROM appointment_gps ag
+     JOIN gps g ON ag.gp_id = g.id
+     LEFT JOIN user_profiles gp_p ON gp_p.user_id = g.user_id
+     WHERE ag.appointment_id = ? ORDER BY ag.id`,
+    [id]
+  );
   const [ahpRows] = await pool.execute(
     'SELECT id, profession, ahp_id FROM appointment_ahps WHERE appointment_id = ? ORDER BY id',
     [id]
@@ -102,8 +144,14 @@ const fetchAppointmentDetails = async (id) => {
     [id]
   );
 
+  const gpAssignments = gpRows.length
+    ? gpRows
+    : (rows[0].gp_id ? [{ gp_id: rows[0].gp_id, gp_code: rows[0].gp_code, gp_name: rows[0].gp_name }] : []);
+
   return {
     ...rows[0],
+    gp_assignments: gpAssignments,
+    gp_ids: gpAssignments.map((g) => g.gp_id),
     ahp_assignments: ahpRows,
     files: fileRows.map((f) => ({
       ...f,
@@ -116,12 +164,25 @@ const fetchAppointmentDetails = async (id) => {
 exports.getAll = async (req, res, next) => {
   try {
     await processTimedOutConferences();
-    const { search, date, status, page = 1, limit = 10 } = req.query;
+    const { search, date, date_scope, status, gp_id, assigned_by, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let query = `${appointmentSelectBase} WHERE 1=1`;
     const params = [];
-    if (date) { query += ' AND a.appointment_date = ?'; params.push(date); }
+    if (DATE_SCOPES[date_scope]) {
+      query += ` AND (${DATE_SCOPES[date_scope]})`;
+    } else if (date) {
+      query += ' AND a.appointment_date = ?';
+      params.push(date);
+    }
     if (status) { query += ' AND a.status = ?'; params.push(status); }
+    if (gp_id) {
+      query += ` AND (
+        a.gp_id = ?
+        OR EXISTS (SELECT 1 FROM appointment_gps ag WHERE ag.appointment_id = a.id AND ag.gp_id = ?)
+      )`;
+      params.push(gp_id, gp_id);
+    }
+    if (assigned_by) { query += ' AND a.created_by = ?'; params.push(assigned_by); }
     if (req.query.scope === 'records') {
       query += ` AND (
         a.status = 'cancelled'
@@ -153,9 +214,22 @@ exports.getAll = async (req, res, next) => {
     query += ' ORDER BY a.appointment_date DESC, a.appointment_time DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit, 10), parseInt(offset, 10));
     const [rows] = await pool.execute(query, params);
+    const [assignerRows] = await pool.execute(`
+      SELECT DISTINCT a.created_by AS id,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, ''))), ''),
+          u.username,
+          u.email
+        ) AS name
+      FROM appointments a
+      JOIN users u ON u.id = a.created_by
+      LEFT JOIN user_profiles p ON p.user_id = u.id
+      ORDER BY name
+    `);
     res.json({
       success: true,
       data: rows,
+      assigners: assignerRows,
       pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
     });
   } catch (err) { next(err); }
@@ -177,7 +251,6 @@ exports.create = async (req, res, next) => {
   try {
     const {
       patient_id,
-      gp_id,
       appointment_date,
       appointment_time,
       title,
@@ -194,8 +267,9 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ success: false, message: ahpError });
     }
 
-    if (!patient_id || !gp_id || !title?.trim()) {
-      return res.status(400).json({ success: false, message: 'Patient, GP, and title are required' });
+    const gpIds = parseGpIds(req.body);
+    if (!patient_id || !gpIds.length || !title?.trim()) {
+      return res.status(400).json({ success: false, message: 'Patient, at least one GP, and title are required' });
     }
 
     await ensureAppointmentSequence(conn);
@@ -211,7 +285,7 @@ exports.create = async (req, res, next) => {
       [
         appointmentCode,
         Number(patient_id),
-        Number(gp_id),
+        gpIds[0],
         firstAhpId,
         title.trim(),
         important_note || null,
@@ -226,6 +300,8 @@ exports.create = async (req, res, next) => {
     );
 
     const appointmentId = result.insertId;
+
+    await replaceGpAssignments(conn, appointmentId, gpIds);
 
     for (const assignment of ahpAssignments) {
       await conn.execute(
@@ -287,11 +363,18 @@ exports.update = async (req, res, next) => {
       }
     }
 
+    const gpIds = req.body.gp_ids !== undefined ? parseGpIds(req.body) : null;
+    if (gpIds && !gpIds.length) {
+      return res.status(400).json({ success: false, message: 'At least one GP is required' });
+    }
+
     await conn.beginTransaction();
 
     const fields = [
-      'patient_id', 'gp_id', 'appointment_date', 'appointment_time', 'status',
+      'patient_id', 'appointment_date', 'appointment_time', 'status',
       'title', 'important_note', 'comments', 'patient_previous_records', 'notes',
+      'cancelled_reason',
+      ...(gpIds ? [] : ['gp_id']),
     ];
     const updates = [];
     const values = [];
@@ -301,6 +384,12 @@ exports.update = async (req, res, next) => {
         values.push(req.body[f] === '' ? null : req.body[f]);
       }
     });
+
+    if (gpIds) {
+      updates.push('gp_id = ?');
+      values.push(gpIds[0]);
+      await replaceGpAssignments(conn, id, gpIds);
+    }
 
     if (ahpAssignments) {
       const firstAhpId = ahpAssignments.length ? ahpAssignments[0].ahp_id : null;
@@ -340,7 +429,7 @@ exports.update = async (req, res, next) => {
 
     await syncConferenceFromAppointment(conn, id, req.user.id);
     if (req.body.status === 'cancelled') {
-      await cancelConferenceForAppointment(conn, id);
+      await cancelConferenceForAppointment(conn, id, req.body.cancelled_reason || null);
     }
 
     await conn.commit();

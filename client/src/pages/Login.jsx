@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
 import {
-  Box, TextField, Button, Typography, Alert, InputAdornment, IconButton,
+  Box, TextField, Button, Typography, Alert, InputAdornment,
   CircularProgress, Stack,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
-  MailOutlined, LockOutlined, VisibilityOutlined, VisibilityOffOutlined, LoginOutlined,
+  MailOutlined, LockOutlined, LoginOutlined,
 } from '@mui/icons-material';
+import PasswordTextField from '../components/PasswordReveal';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { login, clearError, clearSession } from '../redux/slices/authSlice';
@@ -45,8 +46,6 @@ const Login = () => {
   const sessionExpired = location.state?.sessionExpired;
   const accountDeactivated = new URLSearchParams(location.search).get('deactivated') === '1';
   const { loading, error, isAuthenticated, user } = useSelector((state) => state.auth);
-  const [showPassword, setShowPassword] = useState(false);
-
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: yupResolver(schema),
     defaultValues: { email: '', password: '' },
@@ -122,11 +121,10 @@ const Login = () => {
           }}
         />
 
-        <TextField
+        <PasswordTextField
           fullWidth
           required
           label="Password"
-          type={showPassword ? 'text' : 'password'}
           placeholder="Enter your password"
           autoComplete="current-password"
           sx={fieldSx}
@@ -138,20 +136,6 @@ const Login = () => {
               startAdornment: (
                 <InputAdornment position="start">
                   <LockOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
-                </InputAdornment>
-              ),
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton
-                    onClick={() => setShowPassword((prev) => !prev)}
-                    edge="end"
-                    size="small"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword
-                      ? <VisibilityOffOutlined sx={{ fontSize: 20 }} />
-                      : <VisibilityOutlined sx={{ fontSize: 20 }} />}
-                  </IconButton>
                 </InputAdornment>
               ),
             },

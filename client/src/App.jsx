@@ -10,7 +10,7 @@ import AppRoutes from './routes/AppRoutes';
 import SessionGuard from './components/SessionGuard';
 import { fetchProfile } from './redux/slices/authSlice';
 import { fetchSystemSettings } from './redux/slices/settingsSlice';
-import { setDarkMode } from './redux/slices/uiSlice';
+import { setDarkMode, hydrateCalendarPopup, hydrateDashboardPrefs } from './redux/slices/uiSlice';
 import { canRoleUseDarkMode } from './hooks/useDarkModeAccess';
 
 const ThemedApp = () => {
@@ -25,6 +25,13 @@ const ThemedApp = () => {
       dispatch(fetchSystemSettings());
     }
   }, [dispatch, isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      dispatch(hydrateCalendarPopup(user.id));
+      dispatch(hydrateDashboardPrefs(user.id));
+    }
+  }, [dispatch, isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !user || !settings.loaded) return;

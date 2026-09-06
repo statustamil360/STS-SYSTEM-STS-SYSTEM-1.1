@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Box, Typography, Button, Grid, Avatar, Alert, Stack, InputAdornment,
+  Box, Typography, Button, Grid, Avatar, Alert, Stack,
   IconButton, Paper, Divider, CircularProgress,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
-  PhotoCameraOutlined, VisibilityOutlined, VisibilityOffOutlined,
+  PhotoCameraOutlined,
   PersonOutlined, PhoneOutlined, LocationOnOutlined, LockOutlined,
   BadgeOutlined, EmailOutlined, SaveOutlined, VpnKeyOutlined,
+  CalendarTodayOutlined, WcOutlined, MedicalServicesOutlined,
+  HealthAndSafetyOutlined, EventOutlined, VerifiedUserOutlined,
 } from '@mui/icons-material';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
@@ -15,7 +17,8 @@ import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchProfile } from '../redux/slices/authSlice';
 import api from '../services/api';
-import { ROLE_LABELS } from '../utils/constants';
+import { ROLE_LABELS, ROLES, formatWeekdays, parseWeekdays } from '../utils/constants';
+import useSystemDateTime from '../hooks/useSystemDateTime';
 import { IconField } from '../components/PremiumFormFields';
 import { changePasswordSchema } from '../utils/formSchemas';
 
@@ -70,8 +73,14 @@ const SectionCard = ({ title, subtitle, icon: Icon, children, accent = 'primary'
   </Paper>
 );
 
+const formatGenderLabel = (value) => {
+  if (!value) return '';
+  return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+};
+
 const Profile = () => {
   const dispatch = useDispatch();
+  const { formatDate } = useSystemDateTime();
   const { user } = useSelector((state) => state.auth);
   const fileInputRef = useRef(null);
   const [passwordMsg, setPasswordMsg] = useState('');
@@ -79,9 +88,6 @@ const Profile = () => {
   const [savingProfile, setSavingProfile] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
-  const [showNewPwd, setShowNewPwd] = useState(false);
-  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
   const { register, handleSubmit, reset } = useForm();
   const {
     register: regPwd,
@@ -167,6 +173,29 @@ const Profile = () => {
   const displayName = `${user?.first_name || user?.profile?.first_name || ''} ${user?.last_name || user?.profile?.last_name || ''}`.trim();
   const profilePicture = user?.profile?.profile_picture || user?.profile_picture;
   const initial = displayName?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase();
+  const availabilityLabel = formatWeekdays(parseWeekdays(user?.availability));
+  const extraProfileRows = user?.role === ROLES.RECEPTIONIST
+    ? [
+      { icon: BadgeOutlined, label: 'Receptionist ID', value: user.receptionist_code },
+      { icon: CalendarTodayOutlined, label: 'Date of Birth', value: user.date_of_birth ? formatDate(user.date_of_birth) : '' },
+      { icon: WcOutlined, label: 'Gender', value: formatGenderLabel(user.gender) },
+      { icon: VerifiedUserOutlined, label: 'National ID (NIC)', value: user.nic },
+    ]
+    : user?.role === ROLES.GP
+      ? [
+        { icon: MedicalServicesOutlined, label: 'GP ID', value: user.gp_code },
+        { icon: MedicalServicesOutlined, label: 'Specialization', value: user.specialization },
+        { icon: VerifiedUserOutlined, label: 'Registration Number', value: user.registration_number },
+        { icon: EventOutlined, label: 'Availability', value: availabilityLabel },
+      ]
+      : user?.role === ROLES.AHP
+        ? [
+          { icon: HealthAndSafetyOutlined, label: 'AHP ID', value: user.ahp_code },
+          { icon: HealthAndSafetyOutlined, label: 'Profession', value: user.profession },
+          { icon: VerifiedUserOutlined, label: 'Registration Number', value: user.registration_number },
+          { icon: EventOutlined, label: 'Availability', value: availabilityLabel },
+        ]
+        : [];
 
   return (
     <Grid container spacing={3}>
@@ -256,6 +285,9 @@ const Profile = () => {
               <ProfileInfoRow icon={EmailOutlined} label="Email" value={user?.email} />
               <ProfileInfoRow icon={PhoneOutlined} label="Phone" value={user?.phone || user?.profile?.phone} />
               <ProfileInfoRow icon={BadgeOutlined} label="Role" value={ROLE_LABELS[user?.role]} />
+              {extraProfileRows.map((row) => (
+                <ProfileInfoRow key={row.label} icon={row.icon} label={row.label} value={row.value} />
+              ))}
             </Stack>
           </Box>
         </Paper>
@@ -323,52 +355,31 @@ const Profile = () => {
                   label="Current Password"
                   icon={VpnKeyOutlined}
                   name="currentPassword"
-                  type={showCurrentPwd ? 'text' : 'password'}
+                  type="password"
                   register={regPwd}
                   required
                   error={!!pwdErrors.currentPassword}
                   helperText={pwdErrors.currentPassword?.message}
-                  endAdornment={(
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => setShowCurrentPwd(!showCurrentPwd)} edge="end" size="small">
-                        {showCurrentPwd ? <VisibilityOffOutlined sx={{ fontSize: 18 }} /> : <VisibilityOutlined sx={{ fontSize: 18 }} />}
-                      </IconButton>
-                    </InputAdornment>
-                  )}
                 />
                 <IconField
                   label="New Password"
                   icon={LockOutlined}
                   name="newPassword"
-                  type={showNewPwd ? 'text' : 'password'}
+                  type="password"
                   register={regPwd}
                   required
                   error={!!pwdErrors.newPassword}
                   helperText={pwdErrors.newPassword?.message || 'Minimum 8 characters'}
-                  endAdornment={(
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => setShowNewPwd(!showNewPwd)} edge="end" size="small">
-                        {showNewPwd ? <VisibilityOffOutlined sx={{ fontSize: 18 }} /> : <VisibilityOutlined sx={{ fontSize: 18 }} />}
-                      </IconButton>
-                    </InputAdornment>
-                  )}
                 />
                 <IconField
                   label="Retype New Password"
                   icon={LockOutlined}
                   name="confirmNewPassword"
-                  type={showConfirmPwd ? 'text' : 'password'}
+                  type="password"
                   register={regPwd}
                   required
                   error={!!pwdErrors.confirmNewPassword}
                   helperText={pwdErrors.confirmNewPassword?.message}
-                  endAdornment={(
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => setShowConfirmPwd(!showConfirmPwd)} edge="end" size="small">
-                        {showConfirmPwd ? <VisibilityOffOutlined sx={{ fontSize: 18 }} /> : <VisibilityOutlined sx={{ fontSize: 18 }} />}
-                      </IconButton>
-                    </InputAdornment>
-                  )}
                 />
               </Stack>
               <Divider sx={{ my: 2.5 }} />

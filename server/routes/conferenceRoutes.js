@@ -4,23 +4,28 @@ const conferenceController = require('../controllers/conferenceController');
 const conferenceReportController = require('../controllers/conferenceReportController');
 const conferenceGuestController = require('../controllers/conferenceGuestController');
 const { authenticate, authorize } = require('../middleware/auth');
-const { canReceptionistEdit, canReceptionistDelete } = require('../middleware/receptionistPermission');
+const {
+  canReceptionistEdit, canReceptionistDelete, requireReceptionistAction,
+} = require('../middleware/receptionistPermission');
 const validate = require('../middleware/validate');
 
 const router = express.Router();
 
 const clinicalRoles = ['receptionist', 'gp', 'ahp', 'admin', 'super_admin', 'conference_guest'];
 
+const canViewDocuments = requireReceptionistAction('documents_view', 'You do not have permission to view conference documents');
+const canExportReports = requireReceptionistAction('reports_export', 'You do not have permission to export meeting reports');
+
 router.get('/guest/info', conferenceGuestController.guestLoginInfo);
 
 router.use(authenticate);
 
-router.get('/join-time-report/export', authorize('receptionist', 'admin'), conferenceController.exportJoinTimeReport);
+router.get('/join-time-report/export', authorize('receptionist', 'admin'), canExportReports, conferenceController.exportJoinTimeReport);
 router.get('/join-time-report', authorize('receptionist', 'admin'), conferenceController.getJoinTimeReport);
 router.get('/today', authorize(...clinicalRoles), conferenceController.getSchedule);
 router.get('/schedule', authorize(...clinicalRoles), conferenceController.getSchedule);
-router.get('/documents', authorize(...clinicalRoles), conferenceController.getDocuments);
-router.get('/export', authorize('receptionist', 'gp', 'ahp', 'admin', 'super_admin'), conferenceController.exportReport);
+router.get('/documents', authorize(...clinicalRoles), canViewDocuments, conferenceController.getDocuments);
+router.get('/export', authorize('receptionist', 'gp', 'ahp', 'admin', 'super_admin'), canExportReports, conferenceController.exportReport);
 router.get('/', authorize(...clinicalRoles), conferenceController.getAll);
 
 router.get('/:id/reports', authorize('gp', 'ahp', 'conference_guest', 'receptionist', 'admin', 'super_admin'), conferenceReportController.getReports);
@@ -42,16 +47,17 @@ router.post('/:id/guests', authorize('receptionist'), [
 ], validate, conferenceGuestController.createGuest);
 router.delete('/:id/guests/:guestId', authorize('receptionist'), conferenceGuestController.revokeGuest);
 
-router.get('/:id/documents/:fileId/view', authorize(...clinicalRoles), conferenceController.viewGeneratedDocument);
+router.get('/:id/documents/:fileId/view', authorize(...clinicalRoles), canViewDocuments, conferenceController.viewGeneratedDocument);
 router.get('/:id', authorize(...clinicalRoles), conferenceController.getById);
 router.post('/', authorize('receptionist'), [
   body('patient_id').isInt(), body('scheduled_date').notEmpty(), body('scheduled_time').notEmpty(),
 ], validate, conferenceController.create);
-router.post('/:id/accept', authorize('gp'), conferenceController.accept);
+router.post('/:id/accept', authorize('receptionist', 'admin'), requireReceptionistAction('conference_open', 'You do not have permission to open meetings'), conferenceController.accept);
 router.post('/:id/join', authorize('gp', 'ahp', 'conference_guest'), conferenceController.join);
 router.post('/:id/leave', authorize('gp', 'ahp', 'conference_guest'), conferenceController.leave);
+router.get('/:id/participants', authorize(...clinicalRoles), conferenceController.getParticipants);
 router.get('/:id/attendance', authorize('receptionist', 'admin', 'super_admin'), conferenceController.getAttendance);
-router.post('/:id/end', authorize('gp'), conferenceController.end);
+router.post('/:id/end', authorize('receptionist', 'admin'), requireReceptionistAction('conference_end', 'You do not have permission to end meetings'), conferenceController.end);
 router.put('/:id', authorize('receptionist', 'gp', 'ahp'), canReceptionistEdit, conferenceController.update);
 router.delete('/:id', authorize('receptionist'), canReceptionistDelete, conferenceController.remove);
 

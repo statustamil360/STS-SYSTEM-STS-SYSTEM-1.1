@@ -1,6 +1,14 @@
 const pool = require('../config/db');
 const { createAuditLog } = require('../middleware/auditLog');
 const { clearPermissionCache } = require('../middleware/receptionistPermission');
+const { NUMERIC_SETTINGS, coerceNumericSetting } = require('../services/settingsService');
+
+const NUMERIC_SETTING_KEYS = Object.keys(NUMERIC_SETTINGS);
+
+const NUMERIC_SETTING_DEFAULTS = NUMERIC_SETTING_KEYS.reduce((acc, key) => {
+  acc[key] = NUMERIC_SETTINGS[key].fallback;
+  return acc;
+}, {});
 
 const BOOLEAN_SETTING_KEYS = [
   'receptionist_can_edit',
@@ -56,6 +64,9 @@ const parseSettingValue = (key, raw, settings) => {
   if (BOOLEAN_SETTING_KEYS.includes(key)) {
     return toBoolean(value, settings[key]);
   }
+  if (NUMERIC_SETTING_KEYS.includes(key)) {
+    return coerceNumericSetting(key, value);
+  }
   if (GATEWAY_DEFAULTS[key] && typeof value === 'object' && value !== null) {
     return { ...GATEWAY_DEFAULTS[key], ...value };
   }
@@ -70,7 +81,7 @@ const toBoolean = (value, fallback = true) => {
 
 exports.getPublic = async (req, res, next) => {
   try {
-    const keys = ['timezone', 'hospital_name', 'language', 'theme', ...BOOLEAN_SETTING_KEYS];
+    const keys = ['timezone', 'hospital_name', 'language', 'theme', ...BOOLEAN_SETTING_KEYS, ...NUMERIC_SETTING_KEYS];
     const placeholders = keys.map(() => '?').join(', ');
     const [rows] = await pool.execute(
       `SELECT setting_key, setting_value FROM settings WHERE setting_key IN (${placeholders})`,
@@ -96,14 +107,19 @@ exports.getPublic = async (req, res, next) => {
       ahp_dark_mode_allowed: true,
       gp_can_download_documents: false,
       ahp_can_download_documents: false,
+      ...NUMERIC_SETTING_DEFAULTS,
     };
     rows.forEach((r) => {
       let value;
       try { value = JSON.parse(r.setting_value); }
       catch { value = r.setting_value; }
-      settings[r.setting_key] = BOOLEAN_SETTING_KEYS.includes(r.setting_key)
-        ? toBoolean(value, settings[r.setting_key])
-        : value;
+      if (BOOLEAN_SETTING_KEYS.includes(r.setting_key)) {
+        settings[r.setting_key] = toBoolean(value, settings[r.setting_key]);
+      } else if (NUMERIC_SETTING_KEYS.includes(r.setting_key)) {
+        settings[r.setting_key] = coerceNumericSetting(r.setting_key, value);
+      } else {
+        settings[r.setting_key] = value;
+      }
     });
     res.json({ success: true, data: settings });
   } catch (err) { next(err); }
@@ -128,6 +144,7 @@ exports.getAll = async (req, res, next) => {
       ahp_dark_mode_allowed: true,
       gp_can_download_documents: false,
       ahp_can_download_documents: false,
+      ...NUMERIC_SETTING_DEFAULTS,
       ...GATEWAY_DEFAULTS,
     };
     rows.forEach((r) => {
@@ -155,7 +172,15 @@ exports.update = async (req, res, next) => {
         });
       }
 
-      const val = typeof value === 'object' ? JSON.stringify(value) : value;
+      let val;
+      if (NUMERIC_SETTING_KEYS.includes(key)) {
+        val = String(coerceNumericSetting(key, value));
+      } else if (typeof value === 'object') {
+        val = JSON.stringify(value);
+      } else {
+        val = value;
+      }
+
       await pool.execute(
         `INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,

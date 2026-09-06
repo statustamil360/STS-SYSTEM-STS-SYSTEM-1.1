@@ -1,18 +1,24 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Paper, Typography, IconButton, Box, Stack, Chip, Divider,
-  TextField, MenuItem, CircularProgress, Alert, InputAdornment, Button, Tooltip,
+  TextField, MenuItem, Alert, InputAdornment, Button, Tooltip,
+  Checkbox, Dialog, DialogContent, TablePagination,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
-  NotificationsOutlined, DoneAllOutlined, SearchOutlined, MarkEmailReadOutlined,
+  NotificationsOutlined, SearchOutlined,
   CloseOutlined, FilterListOutlined, InboxOutlined, PersonOutlined, TaskAltOutlined,
-  EventOutlined, SecurityOutlined, InfoOutlined,
+  EventOutlined, SecurityOutlined, InfoOutlined, DeleteOutlined, VisibilityOutlined,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import PageLoader from '../../components/PageLoader';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import { PremiumDialogHeader, dialogPaperSx, dialogContentSx } from '../../components/PremiumFormFields';
+import { refreshNotificationBadge } from '../../utils/notificationRefresh';
+
+const PAGE_SIZE = 15;
 
 const fieldSx = {
   '& .MuiOutlinedInput-root': {
@@ -75,54 +81,105 @@ const Notifications = () => {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [markingAll, setMarkingAll] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewItem, setViewItem] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const params = { limit: 100 };
-      if (filter === 'unread') params.unread_only = 'true';
+      const params = { page: page + 1, limit: PAGE_SIZE };
+      if (search) params.search = search;
+      if (filter === 'unread') params.is_read = 'false';
+      if (filter === 'read') params.is_read = 'true';
       const { data } = await api.get('/notifications', { params });
       setNotifications(data.data || []);
+      setTotal(data.pagination?.total ?? (data.data || []).length);
+      setUnreadCount(data.unreadCount || 0);
+      setSelectedIds([]);
     } catch {
       setError('Failed to load notifications');
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, page, search]);
 
   useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
 
-  const markRead = async (id) => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPage(0);
+      setSearch(searchInput.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const refreshAfterChange = async () => {
+    await fetchNotifications();
+    refreshNotificationBadge();
+  };
+
+  const handleView = async (row) => {
     try {
-      await api.patch(`/notifications/${id}/read`);
-      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
-      toast.success('Marked as read');
+      const { data } = await api.get(`/notifications/${row.id}`);
+      setViewItem(data.data);
+      setViewOpen(true);
+      if (!row.is_read) {
+        await api.patch(`/notifications/${row.id}/read`);
+        refreshNotificationBadge();
+        setNotifications((prev) => prev.map((n) => (n.id === row.id ? { ...n, is_read: true } : n)));
+        setUnreadCount((prev) => Math.max(0, prev - 1));
+      }
     } catch {
-      toast.error('Failed to mark notification as read');
+      toast.error('Failed to open notification');
     }
   };
 
-  const markAllRead = async () => {
-    setMarkingAll(true);
+  const requestDelete = (ids) => {
+    setPendingDelete(ids);
+    setConfirmOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    const ids = pendingDelete || [];
     try {
-      await api.patch('/notifications/read-all');
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      toast.success('All notifications marked as read');
+      if (ids.length === 1) {
+        await api.delete(`/notifications/${ids[0]}`);
+      } else {
+        await api.delete('/notifications/selected', { data: { ids } });
+      }
+      toast.success(ids.length === 1 ? 'Notification deleted' : 'Selected notifications deleted');
+      if (notifications.length <= ids.length && page > 0) setPage((p) => p - 1);
+      await refreshAfterChange();
     } catch {
-      toast.error('Failed to mark all as read');
+      toast.error('Failed to delete notification');
     } finally {
-      setMarkingAll(false);
+      setConfirmOpen(false);
+      setPendingDelete(null);
     }
   };
 
-  const unreadCount = notifications.filter((n) => !n.is_read).length;
-  const filtered = notifications.filter((n) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return n.title?.toLowerCase().includes(q) || n.message?.toLowerCase().includes(q);
-  });
+  const pageIds = notifications.map((n) => n.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+  const somePageSelected = pageIds.some((id) => selectedIds.includes(id));
+
+  const toggleOne = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
+
+  const toggleAllPage = () => {
+    setSelectedIds((prev) => {
+      if (allPageSelected) return prev.filter((id) => !pageIds.includes(id));
+      return [...new Set([...prev, ...pageIds])];
+    });
+  };
 
   return (
     <Paper
@@ -147,7 +204,7 @@ const Notifications = () => {
             </Typography>
             {!loading && (
               <Chip
-                label={`${notifications.length} notification${notifications.length === 1 ? '' : 's'}`}
+                label={`${total} notification${total === 1 ? '' : 's'}`}
                 size="small"
                 sx={{
                   height: 24,
@@ -171,25 +228,16 @@ const Notifications = () => {
             )}
           </Stack>
 
-          {unreadCount > 0 && (
+          {selectedIds.length > 0 && (
             <Button
-              variant="contained"
+              variant="outlined"
+              color="error"
               size="small"
-              startIcon={markingAll ? <CircularProgress size={14} color="inherit" /> : <DoneAllOutlined />}
-              onClick={markAllRead}
-              disabled={markingAll}
-              sx={{
-                flexShrink: 0,
-                px: 2,
-                py: 0.875,
-                borderRadius: 2,
-                fontWeight: 600,
-                fontSize: '0.8125rem',
-                boxShadow: '0 6px 16px rgba(30, 58, 95, 0.2)',
-                '&:hover': { boxShadow: '0 8px 20px rgba(30, 58, 95, 0.26)' },
-              }}
+              startIcon={<DeleteOutlined />}
+              onClick={() => requestDelete(selectedIds)}
+              sx={{ borderRadius: 2, fontWeight: 600 }}
             >
-              {markingAll ? 'Updating...' : 'Mark All Read'}
+              Delete ({selectedIds.length})
             </Button>
           )}
         </Stack>
@@ -202,8 +250,8 @@ const Notifications = () => {
           <TextField
             size="small"
             placeholder="Search notifications..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             sx={{ ...fieldSx, flex: { lg: '1 1 240px' }, minWidth: { xs: '100%', sm: 220 }, maxWidth: { lg: 360 } }}
             slotProps={{
               input: {
@@ -212,9 +260,9 @@ const Notifications = () => {
                     <SearchOutlined sx={{ fontSize: 18, color: 'text.secondary' }} />
                   </InputAdornment>
                 ),
-                endAdornment: search ? (
+                endAdornment: searchInput ? (
                   <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setSearch('')} edge="end">
+                    <IconButton size="small" onClick={() => setSearchInput('')} edge="end">
                       <CloseOutlined sx={{ fontSize: 16 }} />
                     </IconButton>
                   </InputAdornment>
@@ -230,11 +278,12 @@ const Notifications = () => {
               size="small"
               label="Filter"
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              sx={{ ...fieldSx, minWidth: 140 }}
+              onChange={(e) => { setFilter(e.target.value); setPage(0); }}
+              sx={{ ...fieldSx, minWidth: 160 }}
             >
               <MenuItem value="all">All Notifications</MenuItem>
               <MenuItem value="unread">Unread Only</MenuItem>
+              <MenuItem value="read">Read Only</MenuItem>
             </TextField>
           </Stack>
         </Stack>
@@ -246,7 +295,7 @@ const Notifications = () => {
 
       {loading ? (
         <PageLoader message="Loading notifications..." />
-      ) : filtered.length === 0 ? (
+      ) : notifications.length === 0 ? (
         <Box sx={{ py: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
           <Box
             sx={{
@@ -263,7 +312,7 @@ const Notifications = () => {
             <InboxOutlined sx={{ fontSize: 28 }} />
           </Box>
           <Typography sx={{ fontWeight: 600 }} color="text.secondary">
-            {filter === 'unread' ? 'No unread notifications' : 'No notifications found'}
+            {filter === 'unread' ? 'No unread notifications' : filter === 'read' ? 'No read notifications' : 'No notifications found'}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {search ? 'Try adjusting your search' : "You're all caught up"}
@@ -271,26 +320,56 @@ const Notifications = () => {
         </Box>
       ) : (
         <Box>
-          {filtered.map((n, index) => (
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              px: { xs: 1.25, sm: 1.75 },
+              py: 1,
+              alignItems: 'center',
+              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.03),
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+            }}
+          >
+            <Checkbox
+              size="small"
+              checked={allPageSelected}
+              indeterminate={somePageSelected && !allPageSelected}
+              onChange={toggleAllPage}
+              inputProps={{ 'aria-label': 'Select all notifications on this page' }}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+              {selectedIds.length ? `${selectedIds.length} selected` : 'Select notifications'}
+            </Typography>
+          </Stack>
+
+          {notifications.map((n, index) => (
             <Box key={n.id}>
               <Stack
                 direction="row"
-                spacing={2}
+                spacing={1.25}
                 sx={{
-                  px: { xs: 2, sm: 2.5 },
-                  py: 2,
+                  px: { xs: 1.25, sm: 1.75 },
+                  py: 1.75,
                   alignItems: 'flex-start',
                   bgcolor: n.is_read
                     ? 'transparent'
                     : (theme) => alpha(theme.palette.primary.main, 0.03),
                   borderLeft: '3px solid',
                   borderLeftColor: n.is_read ? 'transparent' : 'primary.main',
-                  transition: 'background-color 120ms ease',
                   '&:hover': {
                     bgcolor: (theme) => alpha(theme.palette.primary.main, n.is_read ? 0.02 : 0.05),
                   },
                 }}
               >
+                <Checkbox
+                  size="small"
+                  checked={selectedIds.includes(n.id)}
+                  onChange={() => toggleOne(n.id)}
+                  sx={{ mt: 0.5 }}
+                  inputProps={{ 'aria-label': `Select ${n.title}` }}
+                />
                 <NotificationIcon type={n.type} read={n.is_read} />
 
                 <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -301,14 +380,12 @@ const Notifications = () => {
                     >
                       {n.title}
                     </Typography>
-                    {!n.is_read && (
-                      <Chip
-                        label="New"
-                        size="small"
-                        color="primary"
-                        sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
-                      />
-                    )}
+                    <Chip
+                      label={n.is_read ? 'Read' : 'Unread'}
+                      size="small"
+                      color={n.is_read ? 'default' : 'primary'}
+                      sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
+                    />
                     {n.type && (
                       <Chip
                         label={formatType(n.type)}
@@ -331,44 +408,121 @@ const Notifications = () => {
                   </Stack>
                 </Box>
 
-                {!n.is_read && (
-                  <Tooltip title="Mark as read">
+                <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0, pt: 0.25 }}>
+                  <Tooltip title="View notification">
                     <IconButton
                       size="small"
-                      onClick={() => markRead(n.id)}
+                      onClick={() => handleView(n)}
                       sx={{
-                        flexShrink: 0,
-                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-                        '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.15) },
+                        bgcolor: (theme) => alpha(theme.palette.info.main, 0.08),
+                        '&:hover': { bgcolor: (theme) => alpha(theme.palette.info.main, 0.15) },
                       }}
                     >
-                      <MarkEmailReadOutlined sx={{ fontSize: 18 }} color="primary" />
+                      <VisibilityOutlined sx={{ fontSize: 18 }} color="info" />
                     </IconButton>
                   </Tooltip>
-                )}
+                  <Tooltip title="Delete notification">
+                    <IconButton
+                      size="small"
+                      onClick={() => requestDelete([n.id])}
+                      sx={{
+                        bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
+                        '&:hover': { bgcolor: (theme) => alpha(theme.palette.error.main, 0.15) },
+                      }}
+                    >
+                      <DeleteOutlined sx={{ fontSize: 18 }} color="error" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
               </Stack>
-              {index < filtered.length - 1 && <Divider sx={{ ml: n.is_read ? 0 : '3px' }} />}
+              {index < notifications.length - 1 && <Divider sx={{ ml: n.is_read ? 0 : '3px' }} />}
             </Box>
           ))}
         </Box>
       )}
 
-      {!loading && filtered.length > 0 && (
+      {!loading && total > 0 && (
         <Box
           sx={{
-            px: 2.5,
-            py: 1.25,
+            px: 1,
             borderTop: '1px solid',
             borderColor: 'divider',
             bgcolor: (theme) => alpha(theme.palette.primary.main, 0.02),
           }}
         >
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
-            Showing {filtered.length} of {notifications.length} notification{notifications.length === 1 ? '' : 's'}
-            {unreadCount > 0 ? ` · ${unreadCount} unread` : ''}
-          </Typography>
+          <TablePagination
+            component="div"
+            count={total}
+            page={page}
+            onPageChange={(_e, next) => setPage(next)}
+            rowsPerPage={PAGE_SIZE}
+            rowsPerPageOptions={[PAGE_SIZE]}
+            labelRowsPerPage="Per page"
+          />
         </Box>
       )}
+
+      <Dialog
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: dialogPaperSx } }}
+      >
+        <PremiumDialogHeader
+          icon={NotificationsOutlined}
+          title="Notification Details"
+          subtitle={viewItem?.is_read ? 'Read notification' : 'Unread notification'}
+        />
+        <DialogContent dividers sx={dialogContentSx}>
+          {viewItem && (
+            <Stack spacing={2}>
+              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                <Chip
+                  label={viewItem.is_read ? 'Read' : 'Unread'}
+                  color={viewItem.is_read ? 'default' : 'primary'}
+                  size="small"
+                  sx={{ fontWeight: 700 }}
+                />
+                {viewItem.type && (
+                  <Chip label={formatType(viewItem.type)} size="small" variant="outlined" />
+                )}
+              </Stack>
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: '0.06em' }}>
+                  TITLE
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>{viewItem.title}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: '0.06em' }}>
+                  MESSAGE
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                  {viewItem.message || '—'}
+                </Typography>
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                Received {formatDateTime(viewItem.created_at)}
+              </Typography>
+            </Stack>
+          )}
+        </DialogContent>
+        <Box sx={{ px: 3, py: 2, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="contained" onClick={() => setViewOpen(false)}>Close</Button>
+        </Box>
+      </Dialog>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={pendingDelete?.length > 1 ? 'Delete Notifications' : 'Delete Notification'}
+        message={pendingDelete?.length > 1
+          ? `Delete ${pendingDelete.length} selected notifications? This cannot be undone.`
+          : 'Delete this notification? This cannot be undone.'}
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => { setConfirmOpen(false); setPendingDelete(null); }}
+      />
     </Paper>
   );
 };

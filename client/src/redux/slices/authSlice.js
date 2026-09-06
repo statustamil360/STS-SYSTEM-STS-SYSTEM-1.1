@@ -8,6 +8,7 @@ export const login = createAsyncThunk('auth/login', async (credentials, { reject
     localStorage.setItem('refreshToken', data.data.refreshToken);
     if (data.data.user?.id) {
       sessionStorage.removeItem(`today_conf_popup_hide_${data.data.user.id}`);
+      sessionStorage.removeItem(`today_conf_popup_remind_${data.data.user.id}`);
       sessionStorage.removeItem(`today_conf_popup_remind10_${data.data.user.id}`);
     }
     return data.data.user;

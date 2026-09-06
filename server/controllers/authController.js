@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/token');
 const { createAuditLog } = require('../middleware/auditLog');
+const { getPermissionsByUserId } = require('../services/receptionistPermissionService');
 
 exports.login = async (req, res, next) => {
   try {
@@ -74,6 +75,9 @@ exports.login = async (req, res, next) => {
           role: user.role,
           status: user.status,
           profile: profiles[0] || null,
+          ...(user.role === 'receptionist'
+            ? { permissions: await getPermissionsByUserId(user.id) }
+            : {}),
         },
         accessToken,
         refreshToken,
@@ -160,14 +164,37 @@ exports.getProfile = async (req, res, next) => {
   try {
     const [rows] = await pool.execute(
       `SELECT u.id, u.email, u.username, u.status, r.name AS role,
-              p.first_name, p.last_name, p.phone, p.profile_picture, p.address
+              p.first_name, p.last_name, p.phone, p.profile_picture, p.address,
+              p.date_of_birth, p.gender, p.nic,
+              rec.receptionist_code,
+              g.gp_code, g.specialization,
+              g.registration_number AS gp_registration_number,
+              g.availability AS gp_availability,
+              a.ahp_code, a.profession,
+              a.registration_number AS ahp_registration_number,
+              a.availability AS ahp_availability
        FROM users u
        JOIN roles r ON u.role_id = r.id
        LEFT JOIN user_profiles p ON p.user_id = u.id
+       LEFT JOIN receptionists rec ON rec.user_id = u.id
+       LEFT JOIN gps g ON g.user_id = u.id
+       LEFT JOIN allied_health_professionals a ON a.user_id = u.id
        WHERE u.id = ?`,
       [req.user.id]
     );
-    res.json({ success: true, data: rows[0] });
+    const profile = rows[0];
+    if (profile) {
+      profile.registration_number = profile.gp_registration_number || profile.ahp_registration_number || null;
+      profile.availability = profile.gp_availability || profile.ahp_availability || null;
+      delete profile.gp_registration_number;
+      delete profile.ahp_registration_number;
+      delete profile.gp_availability;
+      delete profile.ahp_availability;
+    }
+    if (profile?.role === 'receptionist') {
+      profile.permissions = await getPermissionsByUserId(profile.id);
+    }
+    res.json({ success: true, data: profile });
   } catch (err) {
     next(err);
   }

@@ -1,22 +1,29 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Box, Typography, Paper, Stack, TextField, Button, Chip,
-  CircularProgress, Alert, InputAdornment, Switch, Divider, FormControlLabel, Checkbox,
+  Box, Typography, Paper, Stack, TextField, Button,
+  CircularProgress, Switch, Divider, FormControlLabel, Checkbox,
+  InputAdornment,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
-  TuneOutlined, HealthAndSafetyOutlined, AddOutlined, DeleteOutlined,
-  Brightness4Outlined, Brightness7Outlined, DownloadOutlined,
+  Brightness4Outlined, DownloadOutlined, ScheduleOutlined,
+  SaveOutlined, NotificationsOutlined, DashboardOutlined,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
-import ConfirmDialog from '../../components/ConfirmDialog';
 import api from '../../services/api';
-import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import { updateSystemSettings } from '../../redux/slices/settingsSlice';
+import {
+  setCalendarPopupEnabled,
+  setConferencePopupEnabled,
+  setTaskAlertsEnabled,
+  setDashboardCardEnabled,
+} from '../../redux/slices/uiSlice';
 import { ROLES } from '../../utils/constants';
+import { ROLE_DASHBOARD_CARDS, isDashboardCardEnabled } from '../../utils/dashboardPreferences';
 import PageLoader from '../../components/PageLoader';
 import MediaDeviceSetup from '../../components/MediaDeviceSetup';
+import { DEFAULT_CONFERENCE_OPEN_LEAD_MINUTES } from '../../hooks/useConferenceOpenLeadMinutes';
 
 const fieldSx = {
   '& .MuiOutlinedInput-root': {
@@ -42,20 +49,119 @@ const ROLE_DOCUMENT_DOWNLOAD_OPTIONS = [
   { key: 'ahp_can_download_documents', label: 'AHP' },
 ];
 
+const MAX_OPEN_LEAD_MINUTES = 720;
+
+const PreferenceToggleRow = ({ title, description, checked, onChange, disabled, sx }) => (
+  <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', justifyContent: 'space-between', py: 1, px: 1, borderRadius: 2, border: '1px solid', borderColor: 'divider', ...sx }}>
+    <Box>
+      <Typography variant="body2" sx={{ fontWeight: 700 }}>{title}</Typography>
+      <Typography variant="caption" color="text.secondary">{description}</Typography>
+    </Box>
+    <Switch checked={checked} onChange={onChange} color="success" disabled={disabled} />
+  </Stack>
+);
+
+const AlertsAndPopupsCard = ({ userId }) => {
+  const dispatch = useDispatch();
+  const calendarEnabled = useSelector((state) => state.ui.calendarPopupEnabled);
+  const conferenceEnabled = useSelector((state) => state.ui.conferencePopupEnabled);
+  const taskAlertsEnabled = useSelector((state) => state.ui.taskAlertsEnabled);
+
+  return (
+    <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 0.5 }}>
+        <Box sx={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
+          <NotificationsOutlined sx={{ fontSize: 17 }} />
+        </Box>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Alerts & popups</Typography>
+      </Stack>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Choose which popups and task alerts appear while you work.
+      </Typography>
+      <Stack spacing={1}>
+        <PreferenceToggleRow
+          title="Show calendar popup"
+          description={calendarEnabled ? 'Calendar button is visible' : 'Calendar button is hidden'}
+          checked={calendarEnabled}
+          onChange={(e) => {
+            dispatch(setCalendarPopupEnabled({ enabled: e.target.checked, userId }));
+            toast.success(e.target.checked ? 'Calendar popup enabled' : 'Calendar popup disabled');
+          }}
+        />
+        <PreferenceToggleRow
+          title="Today's Conferences popup"
+          description={conferenceEnabled ? 'Meeting start popup is shown' : 'Meeting start popup is hidden'}
+          checked={conferenceEnabled}
+          onChange={(e) => {
+            dispatch(setConferencePopupEnabled({ enabled: e.target.checked, userId }));
+            toast.success(e.target.checked ? "Today's Conferences popup enabled" : "Today's Conferences popup disabled");
+          }}
+        />
+        <PreferenceToggleRow
+          title="Task notifications"
+          description={taskAlertsEnabled ? 'New task and update toasts are shown' : 'Task alert toasts are hidden'}
+          checked={taskAlertsEnabled}
+          onChange={(e) => {
+            dispatch(setTaskAlertsEnabled({ enabled: e.target.checked, userId }));
+            toast.success(e.target.checked ? 'Task notifications enabled' : 'Task notifications disabled');
+          }}
+        />
+      </Stack>
+    </Paper>
+  );
+};
+
+const DashboardCardsCard = ({ userId, role }) => {
+  const dispatch = useDispatch();
+  const cards = useSelector((state) => state.ui.dashboardCards);
+  const options = ROLE_DASHBOARD_CARDS[role] || [];
+  if (!options.length) return null;
+
+  return (
+    <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 0.5 }}>
+        <Box sx={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
+          <DashboardOutlined sx={{ fontSize: 17 }} />
+        </Box>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Dashboard cards</Typography>
+      </Stack>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Use one switch for the top count-card row. Other dashboard sections can still be turned on or off separately.
+      </Typography>
+      <Stack spacing={1}>
+        {options.map((item) => {
+          const enabled = isDashboardCardEnabled(cards, item.key);
+          return (
+            <PreferenceToggleRow
+              key={item.key}
+              title={item.label}
+              description={item.description || (enabled ? 'Visible on dashboard' : 'Hidden on dashboard')}
+              checked={enabled}
+              onChange={(e) => {
+                dispatch(setDashboardCardEnabled({ key: item.key, enabled: e.target.checked, userId }));
+                toast.success(e.target.checked ? `${item.label} enabled` : `${item.label} disabled`);
+              }}
+            />
+          );
+        })}
+      </Stack>
+    </Paper>
+  );
+};
+
+const DisplayPreferences = ({ userId, role }) => (
+  <Stack spacing={2.5}>
+    <AlertsAndPopupsCard userId={userId} />
+    <DashboardCardsCard userId={userId} role={role} />
+  </Stack>
+);
+
 const Preferences = () => {
   const dispatch = useDispatch();
-  const role = useSelector((state) => state.auth.user?.role);
+  const user = useSelector((state) => state.auth.user);
+  const role = user?.role;
   const isAdmin = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(role);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(role);
-  const canManageProfessions = role === ROLES.RECEPTIONIST;
-  const [professions, setProfessions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [newProfession, setNewProfession] = useState('');
-  const [error, setError] = useState('');
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState(null);
   const [darkSettings, setDarkSettings] = useState({
     dark_mode_allowed: true,
     receptionist_dark_mode_allowed: true,
@@ -68,28 +174,8 @@ const Preferences = () => {
   });
   const [permissionsLoading, setPermissionsLoading] = useState(isAdmin);
   const [savingPermission, setSavingPermission] = useState(null);
-
-  const fetchProfessions = useCallback(async () => {
-    if (isAdmin || isClinical) return;
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await api.get('/preferences/ahp-professions');
-      setProfessions(data.data ?? []);
-    } catch {
-      setError('Failed to load AHP professions');
-    } finally {
-      setLoading(false);
-    }
-  }, [isAdmin, isClinical]);
-
-  useEffect(() => {
-    if (isAdmin || isClinical) {
-      setLoading(false);
-      return;
-    }
-    fetchProfessions();
-  }, [fetchProfessions, isAdmin, isClinical]);
+  const [openLeadMinutes, setOpenLeadMinutes] = useState(String(DEFAULT_CONFERENCE_OPEN_LEAD_MINUTES));
+  const [savedOpenLeadMinutes, setSavedOpenLeadMinutes] = useState(String(DEFAULT_CONFERENCE_OPEN_LEAD_MINUTES));
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -107,6 +193,10 @@ const Preferences = () => {
           gp_can_download_documents: d.gp_can_download_documents === true,
           ahp_can_download_documents: d.ahp_can_download_documents === true,
         });
+        const lead = Number(d.conference_open_lead_minutes);
+        const resolvedLead = String(Number.isFinite(lead) ? lead : DEFAULT_CONFERENCE_OPEN_LEAD_MINUTES);
+        setOpenLeadMinutes(resolvedLead);
+        setSavedOpenLeadMinutes(resolvedLead);
       })
       .catch(() => toast.error('Failed to load dark mode settings'))
       .finally(() => setPermissionsLoading(false));
@@ -140,72 +230,48 @@ const Preferences = () => {
     successMessage: 'Document download setting updated',
   });
 
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    const name = newProfession.trim();
-    if (!name) {
-      toast.error('Enter a profession name');
+  const handleOpenLeadSave = async () => {
+    const minutes = Number(openLeadMinutes);
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_OPEN_LEAD_MINUTES) {
+      toast.error(`Enter a whole number of minutes between 0 and ${MAX_OPEN_LEAD_MINUTES}`);
       return;
     }
-    setSubmitting(true);
+    setSavingPermission('conference_open_lead_minutes');
     try {
-      await api.post('/preferences/ahp-professions', { name });
-      toast.success('Profession added successfully');
-      setNewProfession('');
-      fetchProfessions();
+      await api.put('/settings', { conference_open_lead_minutes: minutes });
+      dispatch(updateSystemSettings({ conference_open_lead_minutes: minutes }));
+      setOpenLeadMinutes(String(minutes));
+      setSavedOpenLeadMinutes(String(minutes));
+      toast.success('Meeting open time updated');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to add profession');
+      toast.error(err.response?.data?.message || 'Failed to update setting');
     } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!pendingDelete) return;
-    setDeletingId(pendingDelete.id);
-    try {
-      await api.delete(`/preferences/ahp-professions/${pendingDelete.id}`);
-      toast.success('Profession removed');
-      setConfirmOpen(false);
-      setPendingDelete(null);
-      fetchProfessions();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to remove profession');
-    } finally {
-      setDeletingId(null);
+      setSavingPermission(null);
     }
   };
 
   if (isClinical) {
-    return <MediaDeviceSetup />;
+    return (
+      <Stack spacing={2.5}>
+        <DisplayPreferences userId={user?.id} role={role} />
+        <MediaDeviceSetup />
+      </Stack>
+    );
+  }
+
+  if (!isAdmin) {
+    return <DisplayPreferences userId={user?.id} role={role} />;
   }
 
   return (
-    <Paper elevation={0} sx={{ overflow: 'hidden', border: '1px solid', borderColor: 'divider', borderRadius: 3, boxShadow: '0 4px 24px rgba(15, 23, 42, 0.06)' }}>
-      <Box sx={{ px: { xs: 2, sm: 2.5 }, pt: 2.5, pb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-          <Box sx={{ width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
-            <TuneOutlined sx={{ fontSize: 20 }} />
-          </Box>
-          <Box>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Preferences</Typography>
-            <Typography variant="caption" color="text.secondary">
-              {isAdmin
-                ? 'Control dark mode and document download access for staff roles'
-                : 'Manage AHP profession options'}
-            </Typography>
-          </Box>
-        </Stack>
-      </Box>
-
-      <Box sx={{ p: { xs: 2, sm: 2.5 } }}>
-        {error && <Alert severity="error" sx={{ mb: 2.5, borderRadius: 2 }}>{error}</Alert>}
-
+    <>
+      <Stack spacing={2.5}>
         {isAdmin && (
           permissionsLoading ? (
             <PageLoader message="Loading preferences..." />
           ) : (
             <Stack spacing={2.5}>
+            <DisplayPreferences userId={user?.id} role={role} />
             <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
               <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 0.5 }}>
                 <Box sx={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
@@ -266,92 +332,63 @@ const Preferences = () => {
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
                 By default, GP and AHP can view documents only. Enable download per role when needed.
               </Typography>
-              <Stack spacing={0.5}>
+              <Stack spacing={1}>
                 {ROLE_DOCUMENT_DOWNLOAD_OPTIONS.map((item) => (
-                  <FormControlLabel
+                  <PreferenceToggleRow
                     key={item.key}
-                    control={
-                      <Checkbox
-                        checked={Boolean(docDownloadSettings[item.key])}
-                        disabled={savingPermission === item.key}
-                        onChange={(e) => handleDocDownloadChange(item.key, e.target.checked)}
-                        color="primary"
-                      />
-                    }
-                    label={`Allow ${item.label} to download conference documents`}
+                    title={`Allow ${item.label} download`}
+                    description={docDownloadSettings[item.key]
+                      ? `${item.label} can download conference documents`
+                      : `${item.label} can view documents only`}
+                    checked={Boolean(docDownloadSettings[item.key])}
+                    disabled={savingPermission === item.key}
+                    onChange={(e) => handleDocDownloadChange(item.key, e.target.checked)}
                   />
                 ))}
+              </Stack>
+            </Paper>
+
+            <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 0.5 }}>
+                <Box sx={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
+                  <ScheduleOutlined sx={{ fontSize: 17 }} />
+                </Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Meeting Open Time</Typography>
+              </Stack>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                How early a receptionist can open a conference before its assigned time. Set 0 to allow opening only at the assigned time.
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'center' } }}>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Minutes before start"
+                  value={openLeadMinutes}
+                  onChange={(e) => setOpenLeadMinutes(e.target.value)}
+                  disabled={savingPermission === 'conference_open_lead_minutes'}
+                  sx={{ ...fieldSx, maxWidth: { sm: 240 } }}
+                  slotProps={{
+                    inputLabel: { shrink: true },
+                    htmlInput: { min: 0, max: MAX_OPEN_LEAD_MINUTES, step: 1 },
+                    input: { startAdornment: <InputAdornment position="start"><ScheduleOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} /></InputAdornment> },
+                  }}
+                />
+                <Button
+                  variant="contained"
+                  onClick={handleOpenLeadSave}
+                  disabled={savingPermission === 'conference_open_lead_minutes' || openLeadMinutes === savedOpenLeadMinutes}
+                  startIcon={savingPermission === 'conference_open_lead_minutes' ? <CircularProgress size={16} color="inherit" /> : <SaveOutlined />}
+                  sx={{ flexShrink: 0, px: 3, borderRadius: '9999px', fontWeight: 600, minWidth: { sm: 160 } }}
+                >
+                  Save
+                </Button>
               </Stack>
             </Paper>
             </Stack>
           )
         )}
-
-        {!isAdmin && (
-          <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
-            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 2 }}>
-              <Box sx={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}>
-                <HealthAndSafetyOutlined sx={{ fontSize: 17 }} />
-              </Box>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>AHP Professions</Typography>
-            </Stack>
-
-            {canManageProfessions && (
-              <Box component="form" onSubmit={handleAdd}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 2.5 }}>
-                  <TextField
-                    fullWidth size="small" required label="New profession"
-                    placeholder={getFieldPlaceholder('profession_name')}
-                    value={newProfession} onChange={(e) => setNewProfession(e.target.value)}
-                    disabled={submitting} sx={fieldSx}
-                    slotProps={{
-                      inputLabel: { shrink: true },
-                      input: { startAdornment: <InputAdornment position="start"><AddOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} /></InputAdornment> },
-                    }}
-                  />
-                  <Button type="submit" variant="contained" disabled={submitting || !newProfession.trim()}
-                    startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : <AddOutlined />}
-                    sx={{ flexShrink: 0, px: 3, borderRadius: '9999px', fontWeight: 600, minWidth: { sm: 160 } }}>
-                    Add Profession
-                  </Button>
-                </Stack>
-              </Box>
-            )}
-
-            {loading ? (
-              <PageLoader message="Loading preferences..." />
-            ) : professions.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>No professions yet.</Typography>
-            ) : (
-              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-                {professions.map((item) => (
-                  <Chip
-                    key={item.id} label={item.name}
-                    {...(canManageProfessions ? {
-                      onDelete: () => { setPendingDelete(item); setConfirmOpen(true); },
-                      deleteIcon: deletingId === item.id ? <CircularProgress size={14} /> : <DeleteOutlined sx={{ fontSize: 16, color: 'error.main' }} />,
-                      disabled: deletingId === item.id,
-                    } : {})}
-                    sx={{ height: 34, fontWeight: 600, bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08), color: 'primary.main' }}
-                  />
-                ))}
-              </Stack>
-            )}
-          </Paper>
-        )}
-      </Box>
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Remove Profession"
-        subject={pendingDelete?.name}
-        message="Remove this profession from the AHP add form?"
-        confirmLabel="Remove"
-        loading={Boolean(deletingId)}
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => { setConfirmOpen(false); setPendingDelete(null); }}
-      />
-    </Paper>
+      </Stack>
+    </>
   );
 };
 

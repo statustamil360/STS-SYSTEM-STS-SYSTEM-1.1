@@ -4,6 +4,11 @@ const { generateCode, generateSequentialCode } = require('../utils/generateCode'
 const { usernameFromEmail, ensureUniqueUsername, emailExists } = require('../utils/userHelpers');
 const { setUserStatus } = require('../utils/sessionHelpers');
 const { createAuditLog } = require('../middleware/auditLog');
+const {
+  normalizePermissions,
+  serializePermissions,
+  clearReceptionistPermissionCache,
+} = require('../services/receptionistPermissionService');
 
 const getRoleId = async (roleName) => {
   const [rows] = await pool.execute('SELECT id FROM roles WHERE name = ?', [roleName]);
@@ -51,10 +56,10 @@ const createStaffUser = async (conn, { roleName, email, username, password, name
 
 exports.getAll = async (req, res, next) => {
   try {
-    const { search, status, page = 1, limit = 10 } = req.query;
+    const { search, status, gender, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let query = `
-      SELECT r.id, r.receptionist_code, u.email, u.username, u.status,
+      SELECT r.id, r.receptionist_code, r.permissions, u.email, u.username, u.status,
              p.first_name, p.last_name, p.phone, p.date_of_birth, p.gender, p.nic,
              p.address, p.emergency_contact, r.created_at
       FROM receptionists r
@@ -66,14 +71,19 @@ exports.getAll = async (req, res, next) => {
       params.push(`%${search}%`, `%${search}%`);
     }
     if (status) { query += ' AND u.status = ?'; params.push(status); }
+    if (['male', 'female', 'other'].includes(gender)) {
+      query += ' AND p.gender = ?';
+      params.push(gender);
+    }
 
     const countQuery = query.replace(/SELECT r\.id.*FROM receptionists r/s, 'SELECT COUNT(*) as total FROM receptionists r');
     const [countResult] = await pool.execute(countQuery, params);
     query += ' ORDER BY r.created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit, 10), parseInt(offset, 10));
     const [rows] = await pool.execute(query, params);
+    const data = rows.map((row) => ({ ...row, permissions: normalizePermissions(row.permissions) }));
 
-    res.json({ success: true, data: rows, pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) } });
+    res.json({ success: true, data, pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) } });
   } catch (err) { next(err); }
 };
 
@@ -81,7 +91,7 @@ exports.create = async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const { name, email, username, password, phone, status = 'active', date_of_birth, gender, nic, address, emergency_contact } = req.body;
+    const { name, email, username, password, phone, status = 'active', date_of_birth, gender, nic, address, emergency_contact, permissions } = req.body;
 
     if (await emailExists(conn, email)) {
       await conn.rollback();
@@ -93,10 +103,11 @@ exports.create = async (req, res, next) => {
       roleName: 'receptionist', email, username, password, name, phone, status,
       code: recCode, codeField: 'receptionist_code', table: 'receptionists', createdBy: req.user.id,
       profile: { date_of_birth, gender, nic, address, emergency_contact },
+      extra: { permissions: serializePermissions(permissions) },
     });
 
     const [created] = await conn.execute(
-      `SELECT r.id AS receptionist_id, r.receptionist_code, r.created_at,
+      `SELECT r.id AS receptionist_id, r.receptionist_code, r.permissions, r.created_at,
               u.id AS user_id, u.email, u.status, p.first_name, p.last_name, p.phone,
               p.date_of_birth, p.gender, p.nic, p.address, p.emergency_contact
        FROM receptionists r
@@ -122,6 +133,7 @@ exports.create = async (req, res, next) => {
       message: 'Receptionist created successfully',
       data: {
         ...created[0],
+        permissions: normalizePermissions(created[0].permissions),
         name: `${created[0].first_name || ''} ${created[0].last_name || ''}`.trim(),
         role: 'receptionist',
       },
@@ -131,10 +143,18 @@ exports.create = async (req, res, next) => {
 
 exports.update = async (req, res, next) => {
   try {
-    const { name, email, phone, status, date_of_birth, gender, nic, address, emergency_contact } = req.body;
+    const { name, email, phone, status, date_of_birth, gender, nic, address, emergency_contact, permissions } = req.body;
     const [rows] = await pool.execute('SELECT user_id FROM receptionists WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Not found' });
     const userId = rows[0].user_id;
+
+    if (permissions !== undefined) {
+      await pool.execute(
+        'UPDATE receptionists SET permissions = ? WHERE id = ?',
+        [serializePermissions(permissions), req.params.id]
+      );
+      clearReceptionistPermissionCache(userId);
+    }
 
     const [currentUser] = await pool.execute('SELECT status FROM users WHERE id = ?', [userId]);
     const previousStatus = currentUser[0]?.status;
@@ -346,7 +366,7 @@ exports.createGP = async (req, res, next) => {
 
 exports.getAllGPs = async (req, res, next) => {
   try {
-    const { search, status, page = 1, limit = 10 } = req.query;
+    const { search, status, specialization, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let query = `
       SELECT g.id, g.gp_code, g.specialization, g.registration_number, g.hospital, g.availability,
@@ -359,11 +379,22 @@ exports.getAllGPs = async (req, res, next) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (status) { query += ' AND u.status = ?'; params.push(status); }
+    if (specialization) { query += ' AND g.specialization = ?'; params.push(specialization); }
     const [countResult] = await pool.execute(query.replace(/SELECT g\.id.*FROM gps g/s, 'SELECT COUNT(*) as total FROM gps g'), params);
     query += ' ORDER BY g.created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit, 10), parseInt(offset, 10));
     const [rows] = await pool.execute(query, params);
-    res.json({ success: true, data: rows, pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) } });
+    const [specRows] = await pool.execute(
+      `SELECT DISTINCT specialization FROM gps
+       WHERE specialization IS NOT NULL AND TRIM(specialization) <> ''
+       ORDER BY specialization`
+    );
+    res.json({
+      success: true,
+      data: rows,
+      specializations: specRows.map((row) => row.specialization),
+      pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
+    });
   } catch (err) { next(err); }
 };
 
@@ -423,7 +454,7 @@ exports.createAHP = async (req, res, next) => {
 
 exports.getAllAHPs = async (req, res, next) => {
   try {
-    const { search, status, page = 1, limit = 10 } = req.query;
+    const { search, status, profession, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let query = `
       SELECT a.id, a.ahp_code, a.profession, a.registration_number, a.availability,
@@ -436,11 +467,22 @@ exports.getAllAHPs = async (req, res, next) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (status) { query += ' AND u.status = ?'; params.push(status); }
+    if (profession) { query += ' AND a.profession = ?'; params.push(profession); }
     const [countResult] = await pool.execute(query.replace(/SELECT a\.id.*FROM allied_health_professionals a/s, 'SELECT COUNT(*) as total FROM allied_health_professionals a'), params);
     query += ' ORDER BY a.created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit, 10), parseInt(offset, 10));
     const [rows] = await pool.execute(query, params);
-    res.json({ success: true, data: rows, pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) } });
+    const [professionRows] = await pool.execute(
+      `SELECT DISTINCT profession FROM allied_health_professionals
+       WHERE profession IS NOT NULL AND TRIM(profession) <> ''
+       ORDER BY profession`
+    );
+    res.json({
+      success: true,
+      data: rows,
+      professions: professionRows.map((row) => row.profession),
+      pagination: { total: countResult[0].total, page: parseInt(page, 10), limit: parseInt(limit, 10) },
+    });
   } catch (err) { next(err); }
 };
 

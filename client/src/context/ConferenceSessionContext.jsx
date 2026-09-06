@@ -170,7 +170,7 @@ export const ConferenceSessionProvider = ({ children }) => {
 
   const handleRemoteEnded = useCallback(() => {
     if (endingRef.current || leavingRef.current) return;
-    toast.info('The host ended this meeting');
+    toast.info('Reception ended this meeting');
     leaveSession();
   }, [leaveSession]);
 

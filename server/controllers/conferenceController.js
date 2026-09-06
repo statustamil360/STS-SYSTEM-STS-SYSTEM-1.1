@@ -7,23 +7,42 @@ const { processTimedOutConferences } = require('../services/conferenceTimeoutSer
 const { buildExport } = require('../services/exportService');
 const { createAuditLog } = require('../middleware/auditLog');
 const { assertClinicalDocumentDownload } = require('../middleware/receptionistPermission');
+const { getNumericSetting } = require('../services/settingsService');
 const { ensureReportRows, lockReportsAfterMeeting } = require('../services/clinicalReportService');
 const { generateParticipantDocuments, formatDocumentCode } = require('../services/clinicalDocumentService');
 const { emitConferenceEnded } = require('../services/socketService');
 const {
-  startSession, endSession, endAllSessions, getConferenceAttendance, getJoinTimeReport,
+  startSession, endSession, countOpenSessions, endAllSessions,
+  getConferenceAttendance, getConferenceParticipantOverview, getJoinTimeReport,
 } = require('../services/conferenceAttendanceService');
 
+const getScheduledAt = (conference) => {
+  const dateStr = String(conference.scheduled_date || '').slice(0, 10);
+  const timePart = String(conference.scheduled_time || '00:00:00').slice(0, 8);
+  const parsed = new Date(`${dateStr}T${timePart}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isAcceptWindowOpen = (conference, leadMinutes, now = Date.now()) => {
+  const scheduledAt = getScheduledAt(conference);
+  if (!scheduledAt) return true;
+  return now >= scheduledAt.getTime() - leadMinutes * 60 * 1000;
+};
+
+/** Reception runs meetings day to day; admins keep the same control as their supervisor. */
+const MEETING_HOST_ROLES = ['receptionist', 'admin'];
+
+const describeAcceptWindow = (leadMinutes) => (leadMinutes > 0
+  ? `This meeting can be opened from ${leadMinutes} minute${leadMinutes === 1 ? '' : 's'} before the assigned time`
+  : 'This meeting can be opened from the assigned time');
+
 const JOIN_TIME_EXPORT_COLUMNS = [
-  { key: 'conference_code', header: 'Conference ID', width: 16 },
   { key: 'patient_name', header: 'Patient', width: 22 },
-  { key: 'meeting_date', header: 'Date', width: 14 },
-  { key: 'meeting_time', header: 'Time', width: 12 },
-  { key: 'participant_name', header: 'Participant', width: 22 },
-  { key: 'participant_role', header: 'Role', width: 10 },
-  { key: 'joined_at', header: 'Joined At', width: 22 },
-  { key: 'left_at', header: 'Left At', width: 22 },
-  { key: 'duration_label', header: 'Duration', width: 14 },
+  { key: 'conference_code', header: 'Conference ID', width: 16 },
+  { key: 'meeting_date', header: 'Conference Date', width: 16 },
+  { key: 'started_at', header: 'Start Time', width: 22 },
+  { key: 'ended_at', header: 'End Time', width: 22 },
+  { key: 'duration_label', header: 'Total Duration', width: 16 },
 ];
 
 const conferenceFromClause = `
@@ -33,6 +52,8 @@ const conferenceFromClause = `
   LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
   LEFT JOIN allied_health_professionals ahp ON c.ahp_id = ahp.id
   LEFT JOIN user_profiles ahp_p ON ahp.user_id = ahp_p.user_id
+  LEFT JOIN users cb ON cb.id = c.created_by
+  LEFT JOIN user_profiles cb_p ON cb_p.user_id = cb.id
 `;
 
 const conferenceSelectBase = `
@@ -40,10 +61,16 @@ const conferenceSelectBase = `
          DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS scheduled_date,
          TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS scheduled_time,
          c.status, c.cancelled_reason, c.cancelled_at, c.meeting_link, c.room_id, c.notes, c.accepted_at, c.accepted_by,
-         c.created_by, c.created_at, c.updated_at,
+         c.ended_at, c.created_by, c.created_at, c.updated_at,
+         TIME_FORMAT(c.accepted_at, '%H:%i:%s') AS started_time,
+         TIME_FORMAT(c.ended_at, '%H:%i:%s') AS ended_time,
          CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
          CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
          CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) AS ahp_name,
+         COALESCE(
+           NULLIF(TRIM(CONCAT(COALESCE(cb_p.first_name, ''), ' ', COALESCE(cb_p.last_name, ''))), ''),
+           cb.username
+         ) AS assigned_by_name,
          (
            SELECT GROUP_CONCAT(
              CONCAT(TRIM(CONCAT(cp_p.first_name, ' ', cp_p.last_name)), ' (', cp.role_in_conference, ')')
@@ -53,7 +80,17 @@ const conferenceSelectBase = `
            JOIN users cp_u ON cp.user_id = cp_u.id
            LEFT JOIN user_profiles cp_p ON cp_p.user_id = cp_u.id
            WHERE cp.conference_id = c.id AND cp.role_in_conference = 'ahp'
-         ) AS ahp_participants
+         ) AS ahp_participants,
+         (
+           SELECT GROUP_CONCAT(
+             TRIM(CONCAT(cp_p.first_name, ' ', cp_p.last_name))
+             ORDER BY cp.id SEPARATOR ', '
+           )
+           FROM conference_participants cp
+           JOIN users cp_u ON cp.user_id = cp_u.id
+           LEFT JOIN user_profiles cp_p ON cp_p.user_id = cp_u.id
+           WHERE cp.conference_id = c.id AND cp.role_in_conference = 'gp'
+         ) AS gp_participants
   ${conferenceFromClause}
 `;
 
@@ -61,8 +98,14 @@ const applyRoleFilter = async (req, query, params) => {
   if (req.user.role === 'gp') {
     const [gpRows] = await pool.execute('SELECT id FROM gps WHERE user_id = ?', [req.user.id]);
     if (gpRows.length) {
-      query += ' AND c.gp_id = ?';
-      params.push(gpRows[0].id);
+      query += ` AND (
+        c.gp_id = ?
+        OR EXISTS (
+          SELECT 1 FROM conference_participants cp
+          WHERE cp.conference_id = c.id AND cp.user_id = ?
+        )
+      )`;
+      params.push(gpRows[0].id, req.user.id);
     }
   }
   if (req.user.role === 'ahp') {
@@ -106,7 +149,14 @@ const getStaffContext = async (user) => {
 
 const isAssignedParticipant = async (conference, user) => {
   const { gpId, ahpId } = await getStaffContext(user);
-  if (user.role === 'gp' && conference.gp_id === gpId) return true;
+  if (user.role === 'gp') {
+    if (conference.gp_id === gpId) return true;
+    const [rows] = await pool.execute(
+      'SELECT id FROM conference_participants WHERE conference_id = ? AND user_id = ?',
+      [conference.id, user.id]
+    );
+    return rows.length > 0;
+  }
   if (user.role === 'ahp') {
     if (conference.ahp_id === ahpId) return true;
     const [rows] = await pool.execute(
@@ -168,8 +218,10 @@ exports.getAll = async (req, res, next) => {
     if (date) { where += ' AND c.scheduled_date = ?'; params.push(date); }
     if (search) {
       where += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
-        OR CONCAT(gp_p.first_name, ' ', gp_p.last_name) LIKE ? OR CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+        OR CONCAT(gp_p.first_name, ' ', gp_p.last_name) LIKE ? OR CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) LIKE ?
+        OR CONCAT(COALESCE(cb_p.first_name, ''), ' ', COALESCE(cb_p.last_name, '')) LIKE ?
+        OR cb.username LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const [countResult] = await pool.execute(
@@ -272,6 +324,8 @@ exports.getDocuments = async (req, res, next) => {
       JOIN patients pat ON pat.id = c.patient_id
       LEFT JOIN gps gp ON c.gp_id = gp.id
       LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
+      LEFT JOIN users cb ON cb.id = c.created_by
+      LEFT JOIN user_profiles cb_p ON cb_p.user_id = cb.id
     `;
 
     const [countRows] = await pool.execute(
@@ -288,6 +342,10 @@ exports.getDocuments = async (req, res, next) => {
               TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS scheduled_time,
               CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
               CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
+              COALESCE(
+                NULLIF(TRIM(CONCAT(COALESCE(cb_p.first_name, ''), ' ', COALESCE(cb_p.last_name, ''))), ''),
+                cb.username
+              ) AS assigned_by_name,
               'generated' AS source
        ${fromClause} ${where}
        ORDER BY c.scheduled_date DESC, c.scheduled_time DESC, d.id DESC
@@ -421,7 +479,7 @@ exports.exportReport = async (req, res, next) => {
 
     const formatted = rows.map((row) => ({
       ...row,
-      gp_name: (row.gp_name || '').trim() || 'Unassigned',
+      gp_name: (row.gp_participants || (row.gp_name || '').trim() || 'Unassigned'),
       ahp_name: (row.ahp_participants || (row.ahp_name || '').trim() || 'Unassigned'),
       status: String(row.status || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
     }));
@@ -553,19 +611,22 @@ exports.accept = async (req, res, next) => {
     if (!conference) {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
-    if (req.user.role !== 'gp') {
-      return res.status(403).json({ success: false, message: 'Only the assigned GP can accept this meeting' });
-    }
-
-    const { gpId } = await getStaffContext(req.user);
-    if (conference.gp_id !== gpId) {
-      return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
+    if (!MEETING_HOST_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only reception or an administrator can open this meeting' });
     }
     if (['completed', 'cancelled'].includes(conference.status)) {
       return res.status(400).json({ success: false, message: 'This conference is no longer available' });
     }
     if (['waiting', 'live'].includes(conference.status)) {
-      return res.json({ success: true, message: 'Meeting already accepted', data: { status: conference.status } });
+      return res.json({ success: true, message: 'Meeting already opened', data: { status: conference.status } });
+    }
+
+    const leadMinutes = await getNumericSetting('conference_open_lead_minutes');
+    if (!isAcceptWindowOpen(conference, leadMinutes)) {
+      return res.status(400).json({
+        success: false,
+        message: describeAcceptWindow(leadMinutes),
+      });
     }
 
     await pool.execute(
@@ -578,13 +639,18 @@ exports.accept = async (req, res, next) => {
     await pool.execute(
       `INSERT INTO notifications (user_id, title, message, type)
        SELECT user_id, ?, ?, ? FROM conference_participants
-       WHERE conference_id = ? AND role_in_conference = 'ahp'`,
-      ['Meeting Accepted', `GP has accepted conference ${conference.conference_code}. You can now join.`, 'conference', conference.id]
+       WHERE conference_id = ?`,
+      [
+        'Meeting Open',
+        `${req.user.role === 'admin' ? 'An administrator' : 'Reception'} has opened conference ${conference.conference_code}. You can now join.`,
+        'conference',
+        conference.id,
+      ]
     );
 
     res.json({
       success: true,
-      message: 'Meeting accepted — AHP participants can now join',
+      message: 'Meeting opened — GP, AHP, and guests can now join',
       data: { status: 'waiting' },
     });
   } catch (err) { next(err); }
@@ -605,29 +671,15 @@ exports.join = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
     }
 
-    if (req.user.role === 'ahp' && !['waiting', 'live'].includes(conference.status)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Meeting has not been accepted by the GP yet',
-      });
-    }
-
-    if (req.user.role === 'gp' && !['waiting', 'live'].includes(conference.status)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Please accept the meeting before joining',
-      });
-    }
-
-    if (req.user.role === 'conference_guest' && !['waiting', 'live'].includes(conference.status)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Meeting is not open for guests yet',
-      });
-    }
-
     if (conference.status === 'completed' || conference.status === 'cancelled') {
       return res.status(400).json({ success: false, message: 'This conference has ended' });
+    }
+
+    if (!['waiting', 'live'].includes(conference.status)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Reception has not opened this meeting yet',
+      });
     }
 
     const room = await videoService.ensureRoom(conference.conference_code);
@@ -697,6 +749,33 @@ exports.leave = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+exports.getParticipants = async (req, res, next) => {
+  try {
+    const conference = await getConferenceById(req.params.id);
+    if (!conference) {
+      return res.status(404).json({ success: false, message: 'Conference not found' });
+    }
+    if (!(await isAssignedParticipant(conference, req.user))) {
+      return res.status(403).json({ success: false, message: 'You cannot view this conference' });
+    }
+
+    const overview = await getConferenceParticipantOverview(conference.id);
+    res.json({
+      success: true,
+      data: {
+        conference_code: conference.conference_code,
+        patient_name: conference.patient_name,
+        assigned_by_name: conference.assigned_by_name,
+        scheduled_date: conference.scheduled_date,
+        started_time: conference.started_time,
+        ended_time: conference.ended_time,
+        status: conference.status,
+        ...overview,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
 exports.getAttendance = async (req, res, next) => {
   try {
     if (!['receptionist', 'admin', 'super_admin'].includes(req.user.role)) {
@@ -729,13 +808,25 @@ exports.end = async (req, res, next) => {
     if (!conference) {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
-    if (req.user.role !== 'gp') {
-      return res.status(403).json({ success: false, message: 'Only the GP can end this meeting' });
+    if (!MEETING_HOST_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only reception or an administrator can end this meeting' });
+    }
+    if (['completed', 'cancelled'].includes(conference.status)) {
+      return res.status(400).json({ success: false, message: 'This conference has already ended' });
+    }
+    if (!['waiting', 'live'].includes(conference.status)) {
+      return res.status(400).json({ success: false, message: 'Open the meeting before ending it' });
     }
 
-    const { gpId } = await getStaffContext(req.user);
-    if (conference.gp_id !== gpId) {
-      return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
+    const stillIn = await countOpenSessions(conference.id);
+    const force = Boolean(req.body?.force);
+    if (stillIn > 0 && !force) {
+      return res.status(409).json({
+        success: false,
+        code: 'PARTICIPANTS_STILL_IN',
+        message: `${stillIn} participant${stillIn === 1 ? ' is' : 's are'} still in the meeting. Wait until everyone leaves, or confirm to end now.`,
+        data: { still_in_meeting: stillIn },
+      });
     }
 
     await pool.execute(
@@ -759,10 +850,9 @@ exports.end = async (req, res, next) => {
 
     await pool.execute(
       `INSERT INTO notifications (user_id, title, message, type)
-       SELECT u.id, ?, ?, ? FROM users u
-       JOIN roles r ON r.id = u.role_id
-       WHERE r.name = 'receptionist' AND u.status = 'active'`,
-      ['Conference Ended', `Meeting ${conference.conference_code} ended — clinical documents are ready`, 'conference']
+       SELECT user_id, ?, ?, ? FROM conference_participants
+       WHERE conference_id = ?`,
+      ['Conference Ended', `Meeting ${conference.conference_code} ended — clinical documents are ready`, 'conference', conference.id]
     );
 
     emitConferenceEnded(conference.id);
@@ -817,18 +907,19 @@ exports.exportJoinTimeReport = async (req, res, next) => {
     if (ahp_id) filterParts.push(`AHP ID: ${ahp_id}`);
 
     const exportRows = report.rows.map((row) => ({
-      ...row,
-      participant_role: String(row.participant_role || '').replace(/_/g, ' ').toUpperCase(),
-      joined_at: row.joined_at ? new Date(row.joined_at).toLocaleString() : '—',
-      left_at: row.left_at ? new Date(row.left_at).toLocaleString() : '—',
-      meeting_time: String(row.meeting_time || '').slice(0, 5),
+      patient_name: row.patient_name,
+      conference_code: row.conference_code,
+      meeting_date: row.meeting_date,
+      started_at: row.started_at ? new Date(row.started_at).toLocaleString() : '—',
+      ended_at: row.ended_at ? new Date(row.ended_at).toLocaleString() : '—',
+      duration_label: row.duration_label,
     }));
 
     const { buffer, mimeType, fileName } = await buildExport(format, {
       columns: JOIN_TIME_EXPORT_COLUMNS,
       rows: exportRows,
       title: 'Participant Join Time Report',
-      subtitle: `${filterParts.join(' · ')} · Total: ${report.summary.grand_total_label} · ${exportRows.length} session(s)`,
+      subtitle: `${filterParts.join(' · ')} · Meeting time total: ${report.summary.grand_total_label} · ${exportRows.length} conference(s)`,
       fileName: `join-time-report-${date}`,
     });
 

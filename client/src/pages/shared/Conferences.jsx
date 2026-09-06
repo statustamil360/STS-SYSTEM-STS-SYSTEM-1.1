@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField, Grid, MenuItem,
+  Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
   Box, Typography, Stack, ToggleButton, ToggleButtonGroup, Button,
   IconButton, Tooltip, Paper, Tabs, Tab, CircularProgress, Divider, Chip, Pagination,
 } from '@mui/material';
@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import { useSelector } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import {
-  VideoCallOutlined, HistoryOutlined, OpenInNewOutlined, LinkOutlined, ContentCopyOutlined,
+  VideoCallOutlined, HistoryOutlined,
   EventAvailableOutlined, FolderOpenOutlined, AssessmentOutlined, DownloadOutlined,
   PictureAsPdfOutlined, GridOnOutlined, DescriptionOutlined, ArticleOutlined,
   VisibilityOutlined, CloseOutlined, AccessTimeOutlined,
@@ -18,6 +18,7 @@ import {
 import DataTable from '../../components/DataTable';
 import ConferenceMeetingCard from '../../components/ConferenceMeetingCard';
 import ConferenceAttendanceDialog from '../../components/ConferenceAttendanceDialog';
+import ConferenceHistoryViewDialog from '../../components/ConferenceHistoryViewDialog';
 import FormDialogActions from '../../components/FormDialogActions';
 import api from '../../services/api';
 import { selectMenuSlotProps } from '../../utils/fieldPlaceholders';
@@ -25,10 +26,12 @@ import { handleFormDialogClose } from '../../components/PremiumFormFields';
 import { ROLES, CONFERENCE_STATUS } from '../../utils/constants';
 import { sortMeetingsByCountdown } from '../../hooks/useCountdown';
 import useDocumentDownloadAccess from '../../hooks/useDocumentDownloadAccess';
+import useReceptionistPermissions from '../../hooks/useReceptionistPermissions';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
 import PageLoader from '../../components/PageLoader';
+import { PdfPreviewFrame, PdfPreviewToolbar, usePdfPreviewControls } from '../../components/PdfPreviewPane';
 import mammoth from 'mammoth';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
@@ -127,6 +130,14 @@ const formatFileSize = (bytes) => {
 const Conferences = () => {
   const { user } = useSelector((state) => state.auth);
   const canDownloadDocuments = useDocumentDownloadAccess();
+  const { can } = useReceptionistPermissions();
+  const canViewDocuments = can('documents_view');
+  const canExportReports = can('reports_export');
+  const availableTabs = useMemo(() => CONFERENCE_TABS.filter((tab) => {
+    if (tab.value === 'documents') return canViewDocuments;
+    if (tab.value === 'reports') return canExportReports;
+    return true;
+  }), [canViewDocuments, canExportReports]);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const canViewAttendance = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(user?.role);
   const canUpdateStatus = isClinical;
@@ -136,6 +147,7 @@ const Conferences = () => {
   const [loadingToday, setLoadingToday] = useState(true);
   const [accepting, setAccepting] = useState(null);
   const [joining, setJoining] = useState(null);
+  const [ending, setEnding] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [open, setOpen] = useState(false);
@@ -143,10 +155,9 @@ const Conferences = () => {
   const [submitting, setSubmitting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const activeTab = CONFERENCE_TABS.some((t) => t.value === requestedTab) ? requestedTab : 'upcoming';
+  const activeTab = availableTabs.some((t) => t.value === requestedTab) ? requestedTab : 'upcoming';
   const setActiveTab = (value) => setSearchParams({ tab: value }, { replace: true });
 
-  const [linkPopup, setLinkPopup] = useState({ open: false, url: '', code: '', status: '' });
   const [sortTick, setSortTick] = useState(() => Date.now());
   const { register, handleSubmit, reset, control } = useForm();
 
@@ -156,10 +167,21 @@ const Conferences = () => {
     open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null,
   });
   const previewUrlRef = useRef('');
+  const pdfControls = usePdfPreviewControls(
+    docPreview.mode === 'pdf' ? docPreview.url : '',
+    Boolean(docPreview.open && docPreview.mode === 'pdf' && docPreview.url && !docPreview.loading),
+  );
   const [reportFilters, setReportFilters] = useState({ start_date: '', end_date: '', status: '' });
   const [exporting, setExporting] = useState(null);
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [attendanceConferenceId, setAttendanceConferenceId] = useState(null);
+  const [historyViewOpen, setHistoryViewOpen] = useState(false);
+  const [historyViewId, setHistoryViewId] = useState(null);
+
+  const openHistoryView = (row) => {
+    setHistoryViewId(row.id);
+    setHistoryViewOpen(true);
+  };
 
   const openAttendance = (row) => {
     setAttendanceConferenceId(row.id);
@@ -343,53 +365,6 @@ const Conferences = () => {
     finally { setSubmitting(false); }
   };
 
-  const normalizeMeetingUrl = (url) => {
-    if (!url) return '';
-    const trimmed = String(url).trim();
-    if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    return `https://${trimmed}`;
-  };
-
-  const handleOpenLink = (row) => {
-    if (!row.meeting_link) return;
-    setLinkPopup({
-      open: true,
-      url: normalizeMeetingUrl(row.meeting_link),
-      code: row.conference_code || '',
-      status: row.status || '',
-    });
-  };
-
-  const copyText = async (text) => {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-    const area = document.createElement('textarea');
-    area.value = text;
-    area.style.position = 'fixed';
-    area.style.opacity = '0';
-    document.body.appendChild(area);
-    area.select();
-    document.execCommand('copy');
-    area.remove();
-  };
-
-  const handleCopyLink = async () => {
-    if (!linkPopup.url) return;
-    try {
-      await copyText(linkPopup.url);
-      toast.success('Meeting link copied');
-    } catch {
-      toast.error('Unable to copy link');
-    }
-  };
-
-  const handleOpenLinkExternal = () => {
-    if (!linkPopup.url) return;
-    window.open(linkPopup.url, '_blank', 'noopener,noreferrer');
-  };
-
   const closeDocPreview = useCallback(() => {
     revokePreviewUrl();
     setDocPreview({ open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null });
@@ -545,7 +520,17 @@ const Conferences = () => {
       ),
     },
     { field: 'file_size', headerName: 'Size', render: (r) => formatFileSize(r.file_size) },
+    {
+      field: 'assigned_by_name',
+      headerName: 'Assigned By',
+      render: (r) => r.assigned_by_name || '—',
+    },
     { field: 'scheduled_date', headerName: 'Meeting Date', render: (r) => formatCalendarDate(r.scheduled_date) },
+    {
+      field: 'scheduled_time',
+      headerName: 'Meeting Time',
+      render: (r) => formatClockTime(r.scheduled_time),
+    },
     { field: 'status', headerName: 'Status', type: 'status' },
     {
       field: 'actions',
@@ -588,14 +573,18 @@ const Conferences = () => {
     const base = [
       { field: 'conference_code', headerName: 'Conference ID' },
       { field: 'patient_name', headerName: 'Patient' },
-      { field: 'gp_name', headerName: 'GP', render: (r) => r.gp_name || '—' },
-      {
-        field: 'ahp_name',
-        headerName: 'AHP',
-        render: (r) => r.ahp_participants || r.ahp_name || '—',
-      },
+      { field: 'assigned_by_name', headerName: 'Assigned By', render: (r) => r.assigned_by_name || '—' },
       { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
-      { field: 'scheduled_time', headerName: 'Time', render: (r) => formatClockTime(r.scheduled_time) },
+      {
+        field: 'started_time',
+        headerName: 'Start Time',
+        render: (r) => (r.started_time ? formatClockTime(r.started_time) : '—'),
+      },
+      {
+        field: 'ended_time',
+        headerName: 'End Time',
+        render: (r) => (r.ended_time ? formatClockTime(r.ended_time) : '—'),
+      },
       { field: 'status', headerName: 'Status', type: 'status' },
     ];
 
@@ -624,30 +613,6 @@ const Conferences = () => {
         ),
       });
     }
-
-    base.push({
-      field: 'meeting_link',
-      headerName: 'Link',
-      sortable: false,
-      render: (r) => (
-        r.meeting_link ? (
-          <Tooltip title="View meeting link">
-            <IconButton
-              size="small"
-              onClick={() => handleOpenLink(r)}
-              sx={{
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-                '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.15) },
-              }}
-            >
-              <OpenInNewOutlined sx={{ fontSize: 17 }} color="primary" />
-            </IconButton>
-          </Tooltip>
-        ) : (
-          <Typography variant="body2" color="text.secondary">—</Typography>
-        )
-      ),
-    });
 
     return base;
   }, [canViewAttendance]);
@@ -699,7 +664,7 @@ const Conferences = () => {
             '& .MuiTabs-indicator': { height: 3, borderRadius: '3px 3px 0 0' },
           }}
         >
-          {CONFERENCE_TABS.map((tab) => (
+          {availableTabs.map((tab) => (
             <Tab
               key={tab.value}
               value={tab.value}
@@ -801,8 +766,10 @@ const Conferences = () => {
                 onRefresh={refreshAll}
                 accepting={accepting}
                 joining={joining}
+                ending={ending}
                 setAccepting={setAccepting}
                 setJoining={setJoining}
+                setEnding={setEnding}
                 isNextUp={schedulePage === 1 && index === 0}
               />
             ))}
@@ -859,10 +826,11 @@ const Conferences = () => {
           onPageChange={setPage}
           onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
           onSearch={(v) => { setSearch(v); setPage(0); }}
-          searchPlaceholder="Search by conference ID, patient, GP, or AHP..."
+          searchPlaceholder="Search by conference ID, patient, or assigned by..."
           filters={conferenceFilters}
+          onView={openHistoryView}
           onEdit={canUpdateStatus ? handleOpen : undefined}
-          actions={canUpdateStatus}
+          actions
         />
       )}
 
@@ -1096,112 +1064,6 @@ const Conferences = () => {
       )}
 
       <Dialog
-        open={linkPopup.open}
-        onClose={() => setLinkPopup({ open: false, url: '', code: '', status: '' })}
-        maxWidth="sm"
-        fullWidth
-        slotProps={{
-          paper: {
-            sx: {
-              borderRadius: 3,
-              boxShadow: '0 24px 64px rgba(15, 23, 42, 0.18)',
-            },
-          },
-        }}
-      >
-        <Box
-          sx={{
-            px: 3,
-            py: 2.5,
-            color: 'common.white',
-            background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 58%, ${theme.palette.primary.light} 100%)`,
-          }}
-        >
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-            <Box
-              sx={{
-                width: 42,
-                height: 42,
-                borderRadius: '50%',
-                display: 'grid',
-                placeItems: 'center',
-                bgcolor: alpha('#FFFFFF', 0.15),
-              }}
-            >
-              <LinkOutlined />
-            </Box>
-            <Box>
-              <Typography variant="caption" sx={{ opacity: 0.85, fontWeight: 700, letterSpacing: '0.08em' }}>
-                MEETING LINK
-              </Typography>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                {linkPopup.code || 'Conference'}
-              </Typography>
-            </Box>
-          </Stack>
-        </Box>
-        <DialogContent sx={{ px: 3, py: 3, bgcolor: 'background.default' }}>
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              borderRadius: 2.5,
-              border: '1px solid',
-              borderColor: 'divider',
-              bgcolor: 'background.paper',
-            }}
-          >
-            <Typography
-              variant="body2"
-              sx={{
-                wordBreak: 'break-all',
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                color: 'text.primary',
-              }}
-            >
-              {linkPopup.url}
-            </Typography>
-          </Paper>
-          {linkPopup.status === 'completed' && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-              This meeting has ended. The link is kept for your records.
-            </Typography>
-          )}
-        </DialogContent>
-        {linkPopup.status !== 'completed' && (
-          <DialogActions
-            sx={{
-              px: 3,
-              py: 2.5,
-              bgcolor: 'background.default',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-              flexDirection: { xs: 'column', sm: 'row' },
-              gap: 1.5,
-              '& > :not(:first-of-type)': { ml: { xs: 0, sm: 0 } },
-            }}
-          >
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<ContentCopyOutlined />}
-              onClick={handleCopyLink}
-            >
-              Copy Link
-            </Button>
-            <Button
-              fullWidth
-              variant="contained"
-              startIcon={<OpenInNewOutlined />}
-              onClick={handleOpenLinkExternal}
-            >
-              Open Link
-            </Button>
-          </DialogActions>
-        )}
-      </Dialog>
-
-      <Dialog
         open={docPreview.open}
         onClose={closeDocPreview}
         maxWidth="lg"
@@ -1224,7 +1086,7 @@ const Conferences = () => {
             background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 55%, ${theme.palette.primary.light} 100%)`,
           }}
         >
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}>
             <Box
               sx={{
                 width: 40,
@@ -1241,7 +1103,7 @@ const Conferences = () => {
                 <DescriptionOutlined sx={{ fontSize: 20 }} />
               )}
             </Box>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ flex: 1, minWidth: 180 }}>
               <Typography variant="caption" sx={{ opacity: 0.85, fontWeight: 700, letterSpacing: '0.08em' }}>
                 DOCUMENT PREVIEW
               </Typography>
@@ -1249,6 +1111,16 @@ const Conferences = () => {
                 {docPreview.fileName}
               </Typography>
             </Box>
+            {docPreview.mode === 'pdf' && docPreview.url && !docPreview.loading && (
+              <PdfPreviewToolbar
+                page={pdfControls.page}
+                pageCount={pdfControls.pageCount}
+                zoom={pdfControls.zoom}
+                onPageChange={pdfControls.setPage}
+                onZoomChange={pdfControls.setZoom}
+                onOpenTab={() => window.open(docPreview.url, '_blank', 'noopener,noreferrer')}
+              />
+            )}
             {docPreview.row && canDownloadDocuments && (
               <Tooltip title="Download">
                 <IconButton
@@ -1289,20 +1161,12 @@ const Conferences = () => {
               </Typography>
             </Stack>
           ) : docPreview.mode === 'pdf' ? (
-            <Box sx={{ width: '100%', height: { xs: '60vh', md: '72vh' }, bgcolor: 'common.white' }}>
-              <object
-                data={`${docPreview.url}#toolbar=1&navpanes=0`}
-                type="application/pdf"
-                aria-label={docPreview.fileName}
-                style={{ width: '100%', height: '100%', display: 'block', border: 0 }}
-              >
-                <iframe
-                  title={docPreview.fileName}
-                  src={`${docPreview.url}#toolbar=1&navpanes=0`}
-                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
-                />
-              </object>
-            </Box>
+            <PdfPreviewFrame
+              url={docPreview.url}
+              fileName={docPreview.fileName}
+              page={pdfControls.page}
+              zoom={pdfControls.zoom}
+            />
           ) : docPreview.mode === 'docx' ? (
             <Box sx={{ p: { xs: 2, sm: 3 }, maxHeight: { xs: '60vh', md: '72vh' }, overflow: 'auto' }}>
               <Paper
@@ -1416,6 +1280,14 @@ const Conferences = () => {
         </form>
       </Dialog>
 
+      <ConferenceHistoryViewDialog
+        open={historyViewOpen}
+        conferenceId={historyViewId}
+        onClose={() => {
+          setHistoryViewOpen(false);
+          setHistoryViewId(null);
+        }}
+      />
       <ConferenceAttendanceDialog
         open={attendanceOpen}
         conferenceId={attendanceConferenceId}

@@ -1,7 +1,8 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { Box, CircularProgress, Typography } from '@mui/material';
-import { ROLE_HOME_PATHS } from '../utils/constants';
+import { ROLE_HOME_PATHS, ROLES } from '../utils/constants';
+import { getReceptionistPageKeyForPath } from '../utils/receptionistPermissions';
 
 const ProtectedRoute = ({ allowedRoles }) => {
   const { isAuthenticated, user, profileLoading } = useSelector((state) => state.auth);
@@ -48,6 +49,13 @@ const ProtectedRoute = ({ allowedRoles }) => {
         state={{ unauthorized: true, from: location.pathname }}
       />
     );
+  }
+
+  if (user.role === ROLES.RECEPTIONIST) {
+    const pageKey = getReceptionistPageKeyForPath(location.pathname);
+    if (pageKey && user.permissions?.[pageKey] === false) {
+      return <Navigate to={ROLE_HOME_PATHS[ROLES.RECEPTIONIST]} replace />;
+    }
   }
 
   return <Outlet />;

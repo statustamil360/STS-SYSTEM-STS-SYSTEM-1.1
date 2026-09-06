@@ -4,11 +4,13 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
-  AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined, EditOutlined,
+  AccessTimeOutlined, VideoCallOutlined, CheckCircleOutlined, EditOutlined, CallEndOutlined,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useCountdown, getMeetingDateTime } from '../hooks/useCountdown';
+import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
+import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { ROLES, STATUS_COLORS } from '../utils/constants';
 import { formatClockTime } from '../utils/dateTime';
 import api from '../services/api';
@@ -53,21 +55,31 @@ const truncate = (value, max = 28) => {
 };
 
 const ConferenceMeetingCard = ({
-  conference, userRole, onRefresh, accepting, joining, setAccepting, setJoining, isNextUp = false,
+  conference, userRole, onRefresh, accepting, joining, ending, setAccepting, setJoining, setEnding, isNextUp = false,
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
   const countdown = useCountdown(conference.scheduled_date, conference.scheduled_time);
+  const openLeadMinutes = useConferenceOpenLeadMinutes();
+  const { can } = useReceptionistPermissions();
+  const canOpenMeetings = can('conference_open');
+  const canEndMeetings = can('conference_end');
   const isGp = userRole === ROLES.GP;
   const isAhp = userRole === ROLES.AHP;
-  const isClinical = isGp || isAhp;
+  const isGuest = userRole === ROLES.CONFERENCE_GUEST;
+  // Admins supervise reception, so they get the same open/end control.
+  const isMeetingHost = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(userRole);
+  const isParticipant = isGp || isAhp || isGuest;
   const isAccepted = ['waiting', 'live'].includes(conference.status);
   const isLive = conference.status === 'live';
   const isCompleted = ['completed', 'cancelled'].includes(conference.status);
-  const canAccept = isGp && conference.status === 'scheduled' && !isCompleted;
-  const canJoinGp = isGp && isAccepted && !isCompleted;
-  const canJoinAhp = isAhp && isAccepted && !isCompleted;
-  const waitingForGp = isAhp && conference.status === 'scheduled' && !isCompleted;
+  const withinAcceptWindow = countdown.diffMs <= openLeadMinutes * MINUTE_MS;
+  const isPendingOpen = isMeetingHost && conference.status === 'scheduled' && !isCompleted && canOpenMeetings;
+  const canAccept = isPendingOpen && withinAcceptWindow;
+  const acceptTooEarly = isPendingOpen && !withinAcceptWindow;
+  const canEnd = isMeetingHost && isAccepted && !isCompleted && canEndMeetings;
+  const canJoin = isParticipant && isAccepted && !isCompleted;
+  const waitingForReception = isParticipant && conference.status === 'scheduled' && !isCompleted;
 
   const tier = useMemo(
     () => resolveTier({ diffMs: countdown.diffMs, isLive, isCompleted }),
@@ -76,6 +88,7 @@ const ConferenceMeetingCard = ({
   const tone = useMemo(() => getTone(theme, tier), [theme, tier]);
   const statusColor = STATUS_COLORS[conference.status] || 'default';
   const ahpName = conference.ahp_participants || conference.ahp_name;
+  const gpName = conference.gp_participants || conference.gp_name;
 
   const goToRoom = (data) => {
     navigate(`/conferences/${conference.id}/room`, {
@@ -93,12 +106,33 @@ const ConferenceMeetingCard = ({
     setAccepting(conference.id);
     try {
       await api.post(`/conferences/${conference.id}/accept`);
-      toast.success('Meeting accepted — AHP participants can now join');
+      toast.success('Meeting opened — GP, AHP, and guests can now join');
       onRefresh?.();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to accept meeting');
+      toast.error(err.response?.data?.message || 'Failed to open meeting');
     } finally {
       setAccepting(null);
+    }
+  };
+
+  const endMeeting = async (force = false) => {
+    setEnding?.(conference.id);
+    try {
+      await api.post(`/conferences/${conference.id}/end`, force ? { force: true } : {});
+      toast.success('Meeting ended — documents are being generated');
+      onRefresh?.();
+    } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.code === 'PARTICIPANTS_STILL_IN') {
+        const confirmed = window.confirm(err.response.data.message);
+        if (confirmed) {
+          await endMeeting(true);
+          return;
+        }
+      } else {
+        toast.error(err.response?.data?.message || 'Failed to end meeting');
+      }
+    } finally {
+      setEnding?.(null);
     }
   };
 
@@ -283,10 +317,12 @@ const ConferenceMeetingCard = ({
 
           {/* Participants — compact */}
           <Stack spacing={0.35} sx={{ mb: 1, flexGrow: 1 }}>
-            <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', lineHeight: 1.35 }} noWrap>
-              <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>GP:</Box>
-              {' '}{truncate(conference.gp_name, 22)}
-            </Typography>
+            <Tooltip title={gpName || ''} placement="bottom">
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>GP:</Box>
+                {' '}{truncate(gpName, 22)}
+              </Typography>
+            </Tooltip>
             <Tooltip title={ahpName || ''} placement="bottom">
               <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>AHP:</Box>
@@ -297,23 +333,9 @@ const ConferenceMeetingCard = ({
 
           {/* Action */}
           <Box sx={{ mt: 'auto' }}>
-            {isClinical ? (
+            {isParticipant ? (
               <>
-                {canAccept && (
-                  <Button
-                    fullWidth
-                    size="small"
-                    variant="contained"
-                    color="success"
-                    startIcon={accepting === conference.id ? <CircularProgress size={14} color="inherit" /> : <CheckCircleOutlined sx={{ fontSize: 16 }} />}
-                    disabled={accepting === conference.id}
-                    onClick={handleAccept}
-                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
-                  >
-                    Accept
-                  </Button>
-                )}
-                {canJoinGp && (
+                {canJoin && (
                   <Button
                     fullWidth
                     size="small"
@@ -326,22 +348,9 @@ const ConferenceMeetingCard = ({
                     Join
                   </Button>
                 )}
-                {(canJoinAhp) && (
-                  <Button
-                    fullWidth
-                    size="small"
-                    variant="contained"
-                    startIcon={joining === conference.id ? <CircularProgress size={14} color="inherit" /> : <VideoCallOutlined sx={{ fontSize: 16 }} />}
-                    disabled={joining === conference.id}
-                    onClick={handleJoin}
-                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
-                  >
-                    Join
-                  </Button>
-                )}
-                {waitingForGp && (
+                {waitingForReception && (
                   <Button fullWidth size="small" variant="outlined" disabled sx={{ py: 0.55, fontSize: '0.68rem', borderRadius: '8px' }}>
-                    Awaiting GP
+                    Awaiting reception
                   </Button>
                 )}
                 {isCompleted && (
@@ -352,21 +361,56 @@ const ConferenceMeetingCard = ({
               </>
             ) : (
               <Box>
-                <Box
-                  sx={{
-                    py: 0.55,
-                    px: 1,
-                    borderRadius: '8px',
-                    textAlign: 'center',
-                    border: '1px solid',
-                    borderColor: alpha(tone.base, 0.22),
-                    bgcolor: alpha(tone.base, 0.05),
-                  }}
-                >
-                  <Typography variant="caption" sx={{ fontWeight: 600, color: tone.accent, fontSize: '0.68rem' }}>
-                    {isAccepted ? 'In progress' : 'Awaiting GP acceptance'}
-                  </Typography>
-                </Box>
+                {canAccept && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    color="success"
+                    startIcon={accepting === conference.id ? <CircularProgress size={14} color="inherit" /> : <CheckCircleOutlined sx={{ fontSize: 16 }} />}
+                    disabled={accepting === conference.id}
+                    onClick={handleAccept}
+                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px', mb: canEnd ? 0.5 : 0 }}
+                  >
+                    Open meeting
+                  </Button>
+                )}
+                {acceptTooEarly && (
+                  <Button fullWidth size="small" variant="outlined" disabled sx={{ py: 0.55, fontSize: '0.68rem', borderRadius: '8px', mb: 0.5 }}>
+                    {openLeadMinutes > 0 ? `Opens ${openLeadMinutes} min before` : 'Opens at assigned time'}
+                  </Button>
+                )}
+                {canEnd && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    color="error"
+                    startIcon={ending === conference.id ? <CircularProgress size={14} color="inherit" /> : <CallEndOutlined sx={{ fontSize: 16 }} />}
+                    disabled={ending === conference.id}
+                    onClick={() => endMeeting(false)}
+                    sx={{ py: 0.6, fontSize: '0.72rem', fontWeight: 700, borderRadius: '8px' }}
+                  >
+                    End meeting
+                  </Button>
+                )}
+                {!canAccept && !acceptTooEarly && !canEnd && (
+                  <Box
+                    sx={{
+                      py: 0.55,
+                      px: 1,
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      border: '1px solid',
+                      borderColor: alpha(tone.base, 0.22),
+                      bgcolor: alpha(tone.base, 0.05),
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ fontWeight: 600, color: tone.accent, fontSize: '0.68rem' }}>
+                      {isCompleted ? (conference.status === 'cancelled' ? 'Cancelled' : 'Ended') : isAccepted ? 'In progress' : 'Awaiting reception'}
+                    </Typography>
+                  </Box>
+                )}
                 {userRole === ROLES.RECEPTIONIST && !isCompleted && (
                   <ConferenceGuestButton conferenceId={conference.id} />
                 )}

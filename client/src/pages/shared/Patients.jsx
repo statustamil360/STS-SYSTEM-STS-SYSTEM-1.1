@@ -265,9 +265,9 @@ const PatientViewDialog = ({ open, patient, loading, onClose }) => {
                 sx={{ bgcolor: alpha('#FFFFFF', 0.14), color: 'common.white', fontWeight: 600, border: '1px solid', borderColor: alpha('#FFFFFF', 0.2) }}
               />
             )}
-            {patient?.phone && (
+            {patient?.created_at && (
               <Chip
-                label={patient.phone}
+                label={`Registered ${formatDate(patient.created_at)}`}
                 size="small"
                 sx={{ bgcolor: alpha('#FFFFFF', 0.12), color: 'common.white', fontWeight: 500, border: '1px solid', borderColor: alpha('#FFFFFF', 0.18) }}
               />
@@ -395,14 +395,14 @@ const PatientViewDialog = ({ open, patient, loading, onClose }) => {
 
 const Patients = () => {
   const { user } = useSelector((state) => state.auth);
-  const { canEdit, canDelete } = useRolePermissions();
+  const { formatDate } = useSystemDateTime();
+  const { canCreate, canEdit, canDelete } = useRolePermissions('patients');
   const canManage = [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const [listError, setListError] = useState('');
   const [search, setSearch] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
-  const [medicalIdFilter, setMedicalIdFilter] = useState('');
-  const [mobileFilter, setMobileFilter] = useState('');
+  const [assignedGpFilter, setAssignedGpFilter] = useState('');
   const [insuranceFilter, setInsuranceFilter] = useState('');
   const [sortBy, setSortBy] = useState('id');
   const [sortOrder, setSortOrder] = useState('desc');
@@ -429,8 +429,7 @@ const Patients = () => {
       params: {
         search: search || undefined,
         gender: genderFilter || undefined,
-        has_medical_id: medicalIdFilter || undefined,
-        has_mobile: mobileFilter || undefined,
+        assigned_gp_id: assignedGpFilter || undefined,
         has_insurance: insuranceFilter || undefined,
         sortBy,
         sortOrder,
@@ -439,7 +438,7 @@ const Patients = () => {
       },
     });
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [search, genderFilter, medicalIdFilter, mobileFilter, insuranceFilter, sortBy, sortOrder]);
+  }, [search, genderFilter, assignedGpFilter, insuranceFilter, sortBy, sortOrder]);
 
   const {
     rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
@@ -568,6 +567,7 @@ const Patients = () => {
     { field: 'full_name', headerName: 'Name', render: (r) => r.full_name || `${r.first_name} ${r.last_name}` },
     { field: 'nic', headerName: 'Medical ID' },
     { field: 'phone', headerName: 'Mobile' },
+    { field: 'dob', headerName: 'Date of Birth', render: (r) => formatDate(r.dob) },
     { field: 'gender', headerName: 'Gender', render: (r) => formatGender(r.gender) },
   ];
 
@@ -584,20 +584,20 @@ const Patients = () => {
         { value: 'other', label: 'Other' },
       ],
     },
-    {
-      key: 'medical_id',
-      label: 'Medical ID',
-      value: medicalIdFilter,
-      onChange: (v) => { setMedicalIdFilter(v); setPage(0); },
-      options: yesNoFilterOptions,
-    },
-    {
-      key: 'mobile',
-      label: 'Mobile',
-      value: mobileFilter,
-      onChange: (v) => { setMobileFilter(v); setPage(0); },
-      options: yesNoFilterOptions,
-    },
+    ...((canManage || gps.length) ? [{
+      key: 'assigned_gp',
+      label: 'Assigned GP',
+      value: assignedGpFilter,
+      onChange: (v) => { setAssignedGpFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All Assigned GPs' },
+        { value: 'unassigned', label: 'Unassigned' },
+        ...gps.map((gp) => ({
+          value: String(gp.id),
+          label: `${`${gp.first_name || ''} ${gp.last_name || ''}`.trim() || gp.email}${gp.gp_code ? ` · ${gp.gp_code}` : ''}`,
+        })),
+      ],
+    }] : []),
     {
       key: 'insurance',
       label: 'Insurance',
@@ -630,8 +630,8 @@ const Patients = () => {
         sortField={sortBy}
         sortOrder={sortOrder}
         onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); setPage(0); }}
-        actionLabel={canManage ? 'Add Patient' : undefined}
-        onAction={canManage ? () => handleOpen() : undefined}
+        actionLabel={canManage && canCreate ? 'Add Patient' : undefined}
+        onAction={canManage && canCreate ? () => handleOpen() : undefined}
         onView={handleView}
         onEdit={canManage && canEdit ? handleOpen : undefined}
         onDelete={canManage && canDelete ? handleDelete : undefined}

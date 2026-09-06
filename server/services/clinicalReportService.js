@@ -31,7 +31,13 @@ const isConferenceParticipant = async (conferenceId, userId, userRole) => {
 
   if (userRole === 'gp') {
     const [gp] = await pool.execute('SELECT id FROM gps WHERE user_id = ?', [userId]);
-    const isAssigned = gp.length && conference[0].gp_id === gp[0].id;
+    if (!gp.length) return { ok: false };
+    const isPrimary = conference[0].gp_id === gp[0].id;
+    const [cp] = await pool.execute(
+      'SELECT id FROM conference_participants WHERE conference_id = ? AND user_id = ?',
+      [conferenceId, userId]
+    );
+    const isAssigned = isPrimary || cp.length > 0;
     return { ok: isAssigned, conference: conference[0], canWrite: isAssigned, isAssignedGp: isAssigned };
   }
 

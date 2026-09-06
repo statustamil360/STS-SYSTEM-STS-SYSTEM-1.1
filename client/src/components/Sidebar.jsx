@@ -8,13 +8,17 @@ import {
   MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
   Description, Person, Tune, ExpandLess, ExpandMore, Shield, AccessTime,
 } from '@mui/icons-material';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { toast } from 'react-toastify';
 import { alpha } from '@mui/material/styles';
 import { MENU_CONFIG } from '../utils/menuConfig';
+import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
+import { getReceptionistPageKeyForPath } from '../utils/receptionistPermissions';
 import { ROLES } from '../utils/constants';
 import { DRAWER_WIDTH } from '../utils/layout';
+import api from '../services/api';
 
 const ICON_MAP = {
   Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
@@ -73,10 +77,109 @@ const Sidebar = ({ mobileOpen, onClose }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useSelector((state) => state.auth);
-  const { sidebarOpen } = useSelector((state) => state.ui);
-  const [openMenus, setOpenMenus] = useState({ Settings: true });
+  const { sidebarOpen, taskAlertsEnabled } = useSelector((state) => state.ui);
+  // Submenus start collapsed; clicking a parent reveals its children.
+  const [openMenus, setOpenMenus] = useState({});
+  const [inboxUnread, setInboxUnread] = useState(0);
+  const [assignedUnread, setAssignedUnread] = useState(0);
+  const unreadHydrated = useRef(false);
+  const lastInboxUnread = useRef(0);
+  const lastAssignedUnread = useRef(0);
   const isSuperAdmin = user?.role === ROLES.SUPER_ADMIN;
-  const menuItems = MENU_CONFIG[user?.role] || [];
+  const { can } = useReceptionistPermissions();
+
+  const isMenuPathAllowed = (path) => {
+    if (path === '/conferences?tab=documents') return can('documents_view');
+    if (path === '/conferences?tab=reports' || path === '/join-time-report') return can('reports_export');
+    return true;
+  };
+
+  const isMenuItemAllowed = (item) => {
+    if (item.section) return true;
+    const pageKey = item.title === 'Conferences'
+      ? 'conferences_page'
+      : item.title === 'Tasks'
+        ? 'tasks_page'
+        : getReceptionistPageKeyForPath(item.path?.split('?')[0]);
+    if (pageKey && !can(pageKey)) return false;
+    return isMenuPathAllowed(item.path);
+  };
+
+  useEffect(() => {
+    const loadInboxUnread = () => {
+      api.get('/tasks/unread-count')
+        .then(({ data }) => {
+          const inboxCount = Number(data.inboxCount ?? data.count) || 0;
+          const assignedCount = Number(data.assignedUpdateCount) || 0;
+          if (taskAlertsEnabled && unreadHydrated.current && inboxCount > lastInboxUnread.current) {
+            const added = inboxCount - lastInboxUnread.current;
+            toast.info(added === 1
+              ? 'A new task was assigned to you'
+              : `${added} new tasks were assigned to you`);
+          }
+          if (taskAlertsEnabled && unreadHydrated.current && assignedCount > lastAssignedUnread.current) {
+            const added = assignedCount - lastAssignedUnread.current;
+            toast.info(added === 1
+              ? 'A task you assigned was updated'
+              : `${added} tasks you assigned were updated`);
+          }
+          unreadHydrated.current = true;
+          lastInboxUnread.current = inboxCount;
+          lastAssignedUnread.current = assignedCount;
+          setInboxUnread(inboxCount);
+          setAssignedUnread(assignedCount);
+        })
+        .catch(() => {});
+    };
+
+    loadInboxUnread();
+    const timer = window.setInterval(loadInboxUnread, 12000);
+    window.addEventListener('tasks:inbox-refresh', loadInboxUnread);
+    window.addEventListener('notifications:refresh', loadInboxUnread);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('tasks:inbox-refresh', loadInboxUnread);
+      window.removeEventListener('notifications:refresh', loadInboxUnread);
+    };
+  }, [taskAlertsEnabled]);
+
+  const unreadBadge = (count) => (
+    count > 0 ? (
+      <Box
+        component="span"
+        sx={{
+          minWidth: 20,
+          height: 20,
+          px: 0.6,
+          ml: 1,
+          borderRadius: 999,
+          bgcolor: 'error.main',
+          color: 'common.white',
+          fontSize: '0.6875rem',
+          fontWeight: 700,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {count > 99 ? '99+' : count}
+      </Box>
+    ) : null
+  );
+
+  const menuLabel = (title, count = 0) => (
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1 }}>
+      <Box component="span">{title}</Box>
+      {unreadBadge(count)}
+    </Box>
+  );
+
+  const menuItems = (MENU_CONFIG[user?.role] || [])
+    .filter((item) => isMenuItemAllowed(item))
+    .map((item) => (item.children
+      ? { ...item, children: item.children.filter((child) => isMenuItemAllowed(child)) }
+      : item));
 
   const handleToggle = (title) => {
     setOpenMenus((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -134,7 +237,16 @@ const Sidebar = ({ mobileOpen, onClose }) => {
         <ListItemIcon sx={{ minWidth: 42 }}>
           <NavIcon Icon={Icon} selected={selected} dark={isSuperAdmin} />
         </ListItemIcon>
-        <ListItemText primary={item.title} />
+        <ListItemText
+          primary={menuLabel(
+            item.title,
+            item.path === '/tasks?tab=inbox'
+              ? inboxUnread
+              : item.path === '/tasks?tab=assigned'
+                ? assignedUnread
+                : 0
+          )}
+        />
       </ListItemButton>
     );
   };
@@ -236,7 +348,7 @@ const Sidebar = ({ mobileOpen, onClose }) => {
                   <ListItemIcon sx={{ minWidth: 42 }}>
                     <NavIcon Icon={ParentIcon} selected={hasActiveChild} dark={isSuperAdmin} />
                   </ListItemIcon>
-                  <ListItemText primary={item.title} />
+                  <ListItemText primary={menuLabel(item.title, item.title === 'Tasks' ? inboxUnread + assignedUnread : 0)} />
                   {isOpen
                     ? <ExpandLess sx={{ fontSize: 18, color: isSuperAdmin ? SUPER_ADMIN.muted : 'text.disabled' }} />
                     : <ExpandMore sx={{ fontSize: 18, color: isSuperAdmin ? SUPER_ADMIN.muted : 'text.disabled' }} />}

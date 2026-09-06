@@ -65,7 +65,15 @@ exports.getStats = async (req, res, next) => {
       const gpId = gpRows[0]?.id;
       const [[patients], [conferences], [notes]] = await Promise.all([
         pool.execute('SELECT COUNT(*) as count FROM patients WHERE assigned_gp_id = ?', [gpId]),
-        pool.execute('SELECT COUNT(*) as count FROM conferences WHERE gp_id = ? AND scheduled_date = ?', [gpId, today()]),
+        pool.execute(
+          `SELECT COUNT(*) as count FROM conferences c
+           WHERE c.scheduled_date = ?
+             AND (c.gp_id = ? OR EXISTS (
+               SELECT 1 FROM conference_participants cp
+               WHERE cp.conference_id = c.id AND cp.user_id = ?
+             ))`,
+          [today(), gpId, req.user.id]
+        ),
         pool.execute('SELECT COUNT(*) as count FROM tasks WHERE assigned_to = ? AND status = ?', [req.user.id, 'pending']),
       ]);
       stats = {
@@ -113,7 +121,11 @@ exports.getRecentConferences = async (req, res, next) => {
 
     if (req.user.role === 'gp') {
       const [gpRows] = await pool.execute('SELECT id FROM gps WHERE user_id = ?', [req.user.id]);
-      query += ' WHERE c.gp_id = ?'; params.push(gpRows[0]?.id);
+      query += ` WHERE (c.gp_id = ? OR EXISTS (
+        SELECT 1 FROM conference_participants cp
+        WHERE cp.conference_id = c.id AND cp.user_id = ?
+      ))`;
+      params.push(gpRows[0]?.id ?? null, req.user.id);
     } else if (req.user.role === 'ahp') {
       const [ahpRows] = await pool.execute('SELECT id FROM allied_health_professionals WHERE user_id = ?', [req.user.id]);
       query += ' WHERE c.ahp_id = ?'; params.push(ahpRows[0]?.id);

@@ -36,6 +36,7 @@ const settingsSlice = createSlice({
     ahp_dark_mode_allowed: true,
     gp_can_download_documents: false,
     ahp_can_download_documents: false,
+    conference_open_lead_minutes: 15,
     loaded: false,
   },
   reducers: {

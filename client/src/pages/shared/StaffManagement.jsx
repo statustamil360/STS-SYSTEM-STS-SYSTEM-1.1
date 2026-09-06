@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Dialog, DialogContent, DialogTitle, DialogActions, Button, TextField,
-  Grid, MenuItem, Box, Typography, Stack, Alert, Avatar, Chip, InputAdornment,
+  Grid, Box, Typography, Stack, Avatar, Chip, Tooltip, IconButton,
+  Switch,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
@@ -9,6 +10,9 @@ import {
   MedicalServicesOutlined, HealthAndSafetyOutlined, BadgeOutlined, LocalHospitalOutlined,
   EventOutlined, ToggleOnOutlined, CalendarTodayOutlined, LocationOnOutlined,
   WcOutlined, ContactEmergencyOutlined, AddOutlined, DeleteOutlined,
+  VerifiedUserOutlined, CheckCircleOutlined, CancelOutlined, EditOutlined,
+  VideoCallOutlined, CallEndOutlined, VisibilityOutlined, DownloadOutlined, AssessmentOutlined,
+  TaskAltOutlined,
 } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
@@ -19,20 +23,234 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import FormDialogActions from '../../components/FormDialogActions';
 import {
   PremiumDialogHeader, SectionCard, IconField, dialogPaperSx, dialogContentSx, fieldSx,
-  handleFormDialogClose, selectMenuSlotProps,
+  handleFormDialogClose,
 } from '../../components/PremiumFormFields';
+import PasswordTextField from '../../components/PasswordReveal';
+import AccountStatusToggle from '../../components/AccountStatusToggle';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import useRolePermissions from '../../hooks/useRolePermissions';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
-import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, WEEKDAY_SELECT_PLACEHOLDER, ROLES } from '../../utils/constants';
+import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, ROLES } from '../../utils/constants';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import {
   staffCreateSchema, staffEditSchema, staffPasswordResetSchema,
   receptionistCreateSchema, receptionistEditSchema,
   staffUpsertSchema, receptionistUpsertSchema,
 } from '../../utils/formSchemas';
+import {
+  RECEPTIONIST_PERMISSION_GROUPS,
+  DEFAULT_RECEPTIONIST_PERMISSIONS,
+  normalizeReceptionistPermissions,
+} from '../../utils/receptionistPermissions';
+
+const PERMISSION_ICONS = {
+  patients_create: AddOutlined,
+  patients_edit: EditOutlined,
+  patients_delete: DeleteOutlined,
+  appointments_create: EventOutlined,
+  appointments_edit: EditOutlined,
+  appointments_delete: DeleteOutlined,
+  tasks_create: AddOutlined,
+  tasks_edit: EditOutlined,
+  tasks_delete: DeleteOutlined,
+  gps_create: MedicalServicesOutlined,
+  gps_edit: EditOutlined,
+  gps_delete: DeleteOutlined,
+  ahps_create: HealthAndSafetyOutlined,
+  ahps_edit: EditOutlined,
+  ahps_delete: DeleteOutlined,
+  conference_open: VideoCallOutlined,
+  conference_end: CallEndOutlined,
+  documents_view: VisibilityOutlined,
+  documents_download: DownloadOutlined,
+  reports_export: AssessmentOutlined,
+};
+
+const CONFERENCE_PERMISSION_KEYS = [
+  'conference_open',
+  'conference_end',
+  'documents_view',
+  'documents_download',
+  'reports_export',
+];
+
+const PermissionIconBadge = ({ permissionKey, label, allowed }) => {
+  const Icon = PERMISSION_ICONS[permissionKey] || VerifiedUserOutlined;
+  return (
+    <Tooltip title={`${label}: ${allowed ? 'Allow' : 'Not allow'}`}>
+      <Box
+        sx={{
+          position: 'relative',
+          width: 28,
+          height: 28,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: (theme) => alpha(
+            allowed ? theme.palette.success.main : theme.palette.error.main,
+            0.1,
+          ),
+          color: allowed ? 'success.main' : 'error.main',
+        }}
+      >
+        <Icon sx={{ fontSize: 15 }} />
+        <Box
+          sx={{
+            position: 'absolute',
+            right: -2,
+            bottom: -2,
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            bgcolor: 'background.paper',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {allowed
+            ? <CheckCircleOutlined sx={{ fontSize: 12, color: 'success.main' }} />
+            : <CancelOutlined sx={{ fontSize: 12, color: 'error.main' }} />}
+        </Box>
+      </Box>
+    </Tooltip>
+  );
+};
+
+const PageOnOffToggle = ({ checked, onChange, disabled = false }) => (
+  <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
+    <Typography
+      variant="caption"
+      sx={{
+        fontWeight: 800,
+        letterSpacing: '0.06em',
+        color: checked ? 'text.disabled' : 'error.main',
+      }}
+    >
+      OFF
+    </Typography>
+    <Switch
+      size="small"
+      color="success"
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange?.(event.target.checked)}
+    />
+    <Typography
+      variant="caption"
+      sx={{
+        fontWeight: 800,
+        letterSpacing: '0.06em',
+        color: checked ? 'success.main' : 'text.disabled',
+      }}
+    >
+      ON
+    </Typography>
+  </Stack>
+);
+
+const ConferencePermissionIcons = ({ permissions }) => {
+  const flags = normalizeReceptionistPermissions(permissions);
+  const conferenceGroup = RECEPTIONIST_PERMISSION_GROUPS.find((group) => group.title === 'Conferences');
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+      {(conferenceGroup?.permissions || CONFERENCE_PERMISSION_KEYS.map((key) => ({ key, label: key }))).map(({ key, label }) => (
+        <PermissionIconBadge
+          key={key}
+          permissionKey={key}
+          label={label}
+          allowed={flags[key] !== false}
+        />
+      ))}
+    </Stack>
+  );
+};
+
+const PERMISSION_GROUP_ICONS = {
+  Patients: LocalHospitalOutlined,
+  Conferences: VideoCallOutlined,
+  Appointments: EventOutlined,
+  'Task List': TaskAltOutlined,
+  'General Practitioners': MedicalServicesOutlined,
+  'Allied Health Professionals': HealthAndSafetyOutlined,
+};
+
+const PermissionModuleCard = ({ group, pageOn, toggle, children }) => {
+  const Icon = PERMISSION_GROUP_ICONS[group.title] || VerifiedUserOutlined;
+  return (
+    <Grid size={{ xs: 12, md: group.permissions.length > 3 ? 12 : 6 }}>
+      <Box
+        sx={{
+          height: '100%',
+          position: 'relative',
+          overflow: 'hidden',
+          px: 2,
+          py: 1.75,
+          pl: 2.25,
+          borderRadius: 2.5,
+          border: '1px solid',
+          borderColor: (theme) => (pageOn
+            ? alpha(theme.palette.success.main, 0.28)
+            : theme.palette.divider),
+          bgcolor: (theme) => (pageOn
+            ? alpha(theme.palette.success.main, 0.04)
+            : theme.palette.background.paper),
+          boxShadow: '0 10px 28px rgba(15, 23, 42, 0.045)',
+          opacity: pageOn ? 1 : 0.62,
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 4,
+            bgcolor: pageOn ? 'success.main' : 'divider',
+          },
+        }}
+      >
+        <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1.25 }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
+            <Box
+              sx={{
+                width: 30,
+                height: 30,
+                borderRadius: 1.5,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: 'primary.main',
+              }}
+            >
+              <Icon sx={{ fontSize: 16 }} />
+            </Box>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 800,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'text.primary',
+              }}
+            >
+              {group.title}
+            </Typography>
+          </Stack>
+          <PageOnOffToggle
+            checked={pageOn}
+            disabled={!toggle}
+            onChange={toggle}
+          />
+        </Stack>
+        {children}
+      </Box>
+    </Grid>
+  );
+};
 
 const EXTRA_FIELD_ICONS = {
   specialization: MedicalServicesOutlined,
@@ -150,6 +368,7 @@ const StaffViewDialog = ({
   extraFields,
   profileFields = [],
   headerIcon: HeaderIcon,
+  showPermissions = false,
 }) => {
   const { formatDate } = useSystemDateTime();
   if (!row) return null;
@@ -204,11 +423,15 @@ const StaffViewDialog = ({
               label={row.status}
               size="small"
               sx={{
-                bgcolor: alpha('#FFFFFF', 0.14),
+                bgcolor: row.status === 'inactive'
+                  ? alpha('#DC2626', 0.92)
+                  : alpha('#FFFFFF', 0.14),
                 color: 'common.white',
-                fontWeight: 600,
+                fontWeight: 700,
                 border: '1px solid',
-                borderColor: alpha('#FFFFFF', 0.2),
+                borderColor: row.status === 'inactive'
+                  ? alpha('#FECACA', 0.55)
+                  : alpha('#FFFFFF', 0.2),
                 textTransform: 'capitalize',
               }}
             />
@@ -227,6 +450,13 @@ const StaffViewDialog = ({
             label="Status"
             value={row.status ? row.status.charAt(0).toUpperCase() + row.status.slice(1) : '—'}
           />
+          {row.created_at && (
+            <DetailRow
+              icon={CalendarTodayOutlined}
+              label="Created Date"
+              value={formatDate(row.created_at)}
+            />
+          )}
         </ViewSection>
 
         {profileFields.length > 0 && (
@@ -267,6 +497,14 @@ const StaffViewDialog = ({
                 />
               );
             })}
+          </ViewSection>
+        )}
+
+        {showPermissions && (
+          <ViewSection title="Permissions" icon={VerifiedUserOutlined}>
+            <Grid size={{ xs: 12 }}>
+              <ReceptionistPermissionView permissions={row.permissions} />
+            </Grid>
           </ViewSection>
         )}
       </DialogContent>
@@ -379,22 +617,42 @@ const AhpProfessionsDialog = ({ open, onClose, onUpdated }) => {
               No professions yet. Add the first one above.
             </Typography>
           ) : (
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+            <Grid container spacing={1.25}>
               {professions.map((item) => (
-                <Chip
-                  key={item.id}
-                  label={item.name}
-                  onDelete={() => setPendingDelete(item)}
-                  deleteIcon={<DeleteOutlined sx={{ fontSize: 16 }} />}
-                  sx={{
-                    height: 34,
-                    fontWeight: 600,
-                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-                    color: 'primary.main',
-                  }}
-                />
+                <Grid key={item.id} size={{ xs: 12, sm: 6 }}>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      px: 1.5,
+                      py: 1,
+                      minHeight: 48,
+                      borderRadius: 2,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontWeight: 700, pr: 1 }}>
+                      {item.name}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => setPendingDelete(item)}
+                      sx={{
+                        color: 'error.main',
+                        bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
+                        '&:hover': { bgcolor: (theme) => alpha(theme.palette.error.main, 0.16) },
+                      }}
+                    >
+                      <DeleteOutlined sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Stack>
+                </Grid>
               ))}
-            </Stack>
+            </Grid>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid', borderColor: 'divider' }}>
@@ -416,6 +674,89 @@ const AhpProfessionsDialog = ({ open, onClose, onUpdated }) => {
     </>
   );
 };
+
+const ReceptionistPermissionView = ({ permissions }) => {
+  const flags = normalizeReceptionistPermissions(permissions);
+  return (
+    <Grid container spacing={1.5} sx={{ width: '100%' }}>
+      {RECEPTIONIST_PERMISSION_GROUPS.map((group) => {
+        const pageOn = flags[group.pageKey] !== false;
+        return (
+          <PermissionModuleCard key={group.title} group={group} pageOn={pageOn}>
+            <Stack direction="row" spacing={1.25} sx={{ flexWrap: 'wrap', rowGap: 1, alignItems: 'center' }}>
+              {group.permissions.map((permission) => (
+                <Stack
+                  key={permission.key}
+                  direction="row"
+                  spacing={0.75}
+                  sx={{ alignItems: 'center' }}
+                >
+                  <PermissionIconBadge
+                    permissionKey={permission.key}
+                    label={permission.label}
+                    allowed={flags[permission.key] !== false}
+                  />
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {permission.label}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </PermissionModuleCard>
+        );
+      })}
+    </Grid>
+  );
+};
+
+const ReceptionistPermissionFields = ({ value, onToggle }) => (
+  <Grid size={{ xs: 12 }}>
+    <Stack spacing={1.5}>
+      <Typography variant="caption" color="text.secondary">
+        Unchecked actions are blocked for this receptionist.
+      </Typography>
+      <Grid container spacing={1.5}>
+        {RECEPTIONIST_PERMISSION_GROUPS.map((group) => {
+          const pageOn = value[group.pageKey] !== false;
+          return (
+            <PermissionModuleCard
+              key={group.title}
+              group={group}
+              pageOn={pageOn}
+              toggle={(granted) => onToggle(group.pageKey, granted)}
+            >
+              <Stack
+                direction="row"
+                sx={{
+                  flexWrap: 'wrap',
+                  gap: 1,
+                  opacity: pageOn ? 1 : 0.4,
+                  pointerEvents: pageOn ? 'auto' : 'none',
+                }}
+              >
+                {group.permissions.map((permission) => {
+                  const checked = value[permission.key] !== false;
+                  return (
+                    <Chip
+                      key={permission.key}
+                      clickable
+                      size="small"
+                      label={permission.label}
+                      color={checked ? 'primary' : 'default'}
+                      variant={checked ? 'filled' : 'outlined'}
+                      onClick={() => onToggle(permission.key, !checked)}
+                      sx={{ fontWeight: 700, height: 28 }}
+                    />
+                  );
+                })}
+              </Stack>
+            </PermissionModuleCard>
+          );
+        })}
+      </Grid>
+    </Stack>
+  </Grid>
+);
 
 const createStaffPage = ({
   title,
@@ -441,15 +782,22 @@ const createStaffPage = ({
   requiredFields = ['name', 'email'],
   addButtonLabel = null,
   enableProfessionsManager = false,
+  permissionResource = null,
+  enableReceptionistPermissions = false,
 }) => {
   const StaffPage = () => {
     const { formatDate } = useSystemDateTime();
-    const { canEdit, canDelete } = useRolePermissions();
+    const { canCreate, canEdit, canDelete } = useRolePermissions(permissionResource);
     const { user } = useSelector((state) => state.auth);
     const canResetPassword = enablePasswordReset
       && [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
+    const [genderFilter, setGenderFilter] = useState('');
+    const [specializationFilter, setSpecializationFilter] = useState('');
+    const [specializationOptions, setSpecializationOptions] = useState([]);
+    const [professionFilter, setProfessionFilter] = useState('');
+    const [professionOptions, setProfessionOptions] = useState([]);
     const [open, setOpen] = useState(false);
     const [editRow, setEditRow] = useState(null);
     const [submitting, setSubmitting] = useState(false);
@@ -461,6 +809,9 @@ const createStaffPage = ({
     const [viewRow, setViewRow] = useState(null);
     const [selectOptions, setSelectOptions] = useState({});
     const [professionsOpen, setProfessionsOpen] = useState(false);
+    const [permissions, setPermissions] = useState(DEFAULT_RECEPTIONIST_PERMISSIONS);
+
+    const togglePermission = (key, granted) => setPermissions((p) => ({ ...p, [key]: granted }));
 
     const upsertSchema = endpoint === '/staff/receptionists' ? receptionistUpsertSchema : staffUpsertSchema;
     const { register, handleSubmit, reset, control, formState: { errors } } = useForm({
@@ -512,12 +863,25 @@ const createStaffPage = ({
         params: {
           search: search || undefined,
           status: statusFilter || undefined,
+          gender: enableReceptionistPermissions ? (genderFilter || undefined) : undefined,
+          specialization: extraFields.some((f) => f.name === 'specialization')
+            ? (specializationFilter || undefined)
+            : undefined,
+          profession: extraFields.some((f) => f.name === 'profession')
+            ? (professionFilter || undefined)
+            : undefined,
           page: pageNum,
           limit,
         },
       });
+      if (Array.isArray(data.specializations)) {
+        setSpecializationOptions(data.specializations);
+      }
+      if (Array.isArray(data.professions)) {
+        setProfessionOptions(data.professions);
+      }
       return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-    }, [search, statusFilter]);
+    }, [search, statusFilter, genderFilter, specializationFilter, professionFilter, enableReceptionistPermissions, extraFields]);
 
     const {
       rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
@@ -540,6 +904,9 @@ const createStaffPage = ({
 
     const handleOpen = (row = null) => {
       setEditRow(row);
+      setPermissions(row
+        ? normalizeReceptionistPermissions(row.permissions)
+        : DEFAULT_RECEPTIONIST_PERMISSIONS);
       const defaults = {
         name: '', email: '', phone: '', password: '', confirmPassword: '', status: 'active',
       };
@@ -582,6 +949,7 @@ const createStaffPage = ({
       try {
         const payload = { ...formData };
         delete payload.confirmPassword;
+        if (enableReceptionistPermissions) payload.permissions = permissions;
         extraFields.forEach((f) => {
           if (f.weekdaySelect && Array.isArray(payload[f.name])) {
             payload[f.name] = payload[f.name].length ? payload[f.name].join(', ') : '';
@@ -674,6 +1042,11 @@ const createStaffPage = ({
       { field: 'first_name', headerName: 'Name', render: (r) => `${r.first_name || ''} ${r.last_name || ''}`.trim() || '—' },
       { field: 'email', headerName: 'Email' },
       ...(hidePhoneColumn ? [] : [{ field: 'phone', headerName: 'Phone', render: (r) => r.phone || '—' }]),
+      ...(enableReceptionistPermissions ? [{
+        field: 'gender',
+        headerName: 'Gender',
+        render: (r) => formatGenderLabel(r.gender),
+      }] : []),
       ...extraFields
         .filter((f) => !f.hideInTable)
         .map((f) => ({
@@ -684,6 +1057,12 @@ const createStaffPage = ({
             return r[f.name] || '—';
           },
         })),
+      ...(enableReceptionistPermissions ? [{
+        field: 'permissions',
+        headerName: 'Conferences',
+        sortable: false,
+        render: (r) => <ConferencePermissionIcons permissions={r.permissions} />,
+      }] : []),
       { field: 'status', headerName: 'Status', type: 'status' },
       ...(showCreatedDate ? [{
         field: 'created_at',
@@ -705,6 +1084,41 @@ const createStaffPage = ({
           { value: 'disabled', label: 'Disabled' },
         ],
       },
+      ...(enableReceptionistPermissions ? [{
+        key: 'gender',
+        label: 'Gender',
+        value: genderFilter,
+        onChange: (v) => { setGenderFilter(v); setPage(0); },
+        options: [
+          { value: '', label: 'All Genders' },
+          { value: 'male', label: 'Male' },
+          { value: 'female', label: 'Female' },
+          { value: 'other', label: 'Other' },
+        ],
+      }] : []),
+      ...(extraFields.some((f) => f.name === 'specialization') ? [{
+        key: 'specialization',
+        label: 'Specialization',
+        value: specializationFilter,
+        onChange: (v) => { setSpecializationFilter(v); setPage(0); },
+        options: [
+          { value: '', label: 'All Specializations' },
+          ...specializationOptions.map((name) => ({ value: name, label: name })),
+        ],
+      }] : []),
+      ...(extraFields.some((f) => f.name === 'profession') ? [{
+        key: 'profession',
+        label: 'Profession',
+        value: professionFilter,
+        onChange: (v) => { setProfessionFilter(v); setPage(0); },
+        options: [
+          { value: '', label: 'All Professions' },
+          ...(professionOptions.length
+            ? professionOptions
+            : (selectOptions.profession || []).map((opt) => opt.value)
+          ).map((name) => ({ value: name, label: name })),
+        ],
+      }] : []),
     ];
 
     const recordsTitle = title === 'General Practitioners'
@@ -746,8 +1160,8 @@ const createStaffPage = ({
               AHP Professions
             </Button>
           ) : null}
-          actionLabel={addLabel}
-          onAction={() => handleOpen()}
+          actionLabel={canCreate ? addLabel : undefined}
+          onAction={canCreate ? () => handleOpen() : undefined}
           actionIcon={PersonAddOutlined}
           onEdit={canEdit ? handleOpen : undefined}
           onView={enableView ? handleView : undefined}
@@ -778,12 +1192,6 @@ const createStaffPage = ({
             sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
           >
             <DialogContent dividers sx={dialogContentSx}>
-              {!editRow && enablePasswordReset && (
-                <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
-                  The password you enter here is what the receptionist will use to log in. It is stored securely and cannot be viewed later.
-                </Alert>
-              )}
-
               <SectionCard title="Account Information" icon={PersonOutlined}>
                 <Grid size={{ xs: 12 }}>
                   <IconField
@@ -796,7 +1204,7 @@ const createStaffPage = ({
                     helperText={errors.name?.message}
                   />
                 </Grid>
-                <Grid size={{ xs: 12 }}>
+                <Grid size={{ xs: 12, sm: 6 }}>
                   <IconField
                     label="Email Address"
                     name="email"
@@ -808,7 +1216,7 @@ const createStaffPage = ({
                     helperText={errors.email?.message}
                   />
                 </Grid>
-                <Grid size={{ xs: 12 }}>
+                <Grid size={{ xs: 12, sm: 6 }}>
                   <IconField
                     label="Phone Number"
                     name="phone"
@@ -879,65 +1287,56 @@ const createStaffPage = ({
                   icon={title.includes('Practitioner') ? MedicalServicesOutlined : HealthAndSafetyOutlined}
                 >
                   {extraFields.map((f) => (
-                    <Grid size={{ xs: 12 }} key={f.name}>
+                    <Grid size={{ xs: 12, sm: f.half ? 6 : 12 }} key={f.name}>
                       {f.weekdaySelect ? (
                         <Controller
                           name={f.name}
                           control={control}
-                          render={({ field }) => (
-                            <TextField
-                              {...field}
-                              value={field.value || []}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                field.onChange(typeof val === 'string' ? val.split(',') : val);
-                              }}
-                              fullWidth
-                              size="small"
-                              select
-                              label={f.label}
-                              sx={fieldSx}
-                              slotProps={{
-                                inputLabel: { shrink: true },
-                                input: {
-                                  startAdornment: (
-                                    <InputAdornment position="start" sx={{ ml: 0.5 }}>
-                                      <EventOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
-                                    </InputAdornment>
-                                  ),
-                                },
-                                select: {
-                                  multiple: true,
-                                  MenuProps: selectMenuSlotProps,
-                                  renderValue: (selected) => {
-                                    if (!selected.length) {
-                                      return (
-                                        <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
-                                          {WEEKDAY_SELECT_PLACEHOLDER}
-                                        </Typography>
-                                      );
-                                    }
+                          render={({ field }) => {
+                            const selected = field.value || [];
+                            const toggleDay = (day) => {
+                              const next = selected.includes(day)
+                                ? selected.filter((item) => item !== day)
+                                : [...selected, day];
+                              field.onChange(WEEKDAYS.filter((item) => next.includes(item)));
+                            };
+                            return (
+                              <Box
+                                sx={{
+                                  px: 1.75,
+                                  py: 1.5,
+                                  borderRadius: 3,
+                                  border: '1px solid',
+                                  borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+                                  bgcolor: 'background.paper',
+                                }}
+                              >
+                                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1.25 }}>
+                                  <EventOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
+                                  <Typography variant="caption" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                                    {f.label}
+                                  </Typography>
+                                </Stack>
+                                <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.75 }}>
+                                  {WEEKDAYS.map((day) => {
+                                    const active = selected.includes(day);
                                     return (
-                                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, py: 0.25 }}>
-                                        {selected.map((day) => (
-                                          <Chip
-                                            key={day}
-                                            label={formatWeekdayShort(day)}
-                                            size="small"
-                                            sx={{ height: 22, fontSize: '0.6875rem', fontWeight: 600 }}
-                                          />
-                                        ))}
-                                      </Box>
+                                      <Chip
+                                        key={day}
+                                        clickable
+                                        size="small"
+                                        label={day.slice(0, 3)}
+                                        color={active ? 'primary' : 'default'}
+                                        variant={active ? 'filled' : 'outlined'}
+                                        onClick={() => toggleDay(day)}
+                                        sx={{ fontWeight: 700, minWidth: 40 }}
+                                      />
                                     );
-                                  },
-                                },
-                              }}
-                            >
-                              {WEEKDAYS.map((day) => (
-                                <MenuItem key={day} value={day}>{day}</MenuItem>
-                              ))}
-                            </TextField>
-                          )}
+                                  })}
+                                </Stack>
+                              </Box>
+                            );
+                          }}
                         />
                       ) : (
                         <IconField
@@ -963,23 +1362,20 @@ const createStaffPage = ({
                 </SectionCard>
               )}
 
+              {enableReceptionistPermissions && (
+                <SectionCard title="Permissions" icon={VerifiedUserOutlined}>
+                  <ReceptionistPermissionFields value={permissions} onToggle={togglePermission} />
+                </SectionCard>
+              )}
+
               <SectionCard title="Account Status" icon={ToggleOnOutlined}>
                 <Grid size={{ xs: 12 }}>
-                  <IconField
-                    label="Status"
+                  <AccountStatusToggle
                     name="status"
-                    select
-                    icon={ToggleOnOutlined}
                     control={control}
-                    showSelectPlaceholder={false}
-                    required={isFieldRequired('status')}
                     error={!!errors.status}
                     helperText={errors.status?.message}
-                  >
-                    <MenuItem value="active">Active</MenuItem>
-                    <MenuItem value="inactive">Inactive</MenuItem>
-                    {editRow && <MenuItem value="disabled">Disabled</MenuItem>}
-                  </IconField>
+                  />
                 </Grid>
               </SectionCard>
             </DialogContent>
@@ -1000,15 +1396,15 @@ const createStaffPage = ({
                   Set a new password for <strong>{resetTarget?.email}</strong>. Existing passwords cannot be retrieved.
                 </Typography>
                 <Stack spacing={2}>
-                  <TextField
-                    fullWidth label="New Password" type="password" required
+                  <PasswordTextField
+                    fullWidth label="New Password" required
                     placeholder={getFieldPlaceholder('newPassword', { type: 'password' })}
                     {...resetPasswordForm.register('password')}
                     error={!!resetPasswordForm.formState.errors.password}
                     helperText={resetPasswordForm.formState.errors.password?.message}
                   />
-                  <TextField
-                    fullWidth label="Confirm Password" type="password" required
+                  <PasswordTextField
+                    fullWidth label="Confirm Password" required
                     placeholder={getFieldPlaceholder('confirmPassword', { type: 'password' })}
                     {...resetPasswordForm.register('confirmPassword')}
                     error={!!resetPasswordForm.formState.errors.confirmPassword}
@@ -1053,6 +1449,7 @@ const createStaffPage = ({
             extraFields={extraFields}
             profileFields={profileFields}
             headerIcon={viewHeaderIcon}
+            showPermissions={enableReceptionistPermissions}
           />
         )}
 
@@ -1076,7 +1473,6 @@ export const Receptionists = createStaffPage({
   codeField: 'receptionist_code',
   codeLabel: 'ID',
   requiredFields: ['name', 'email', 'phone'],
-  showCreatedDate: true,
   allowDeactivate: false,
   enableView: true,
   viewHeaderIcon: PersonOutlined,
@@ -1102,6 +1498,7 @@ export const Receptionists = createStaffPage({
   createSchema: receptionistCreateSchema,
   editSchema: receptionistEditSchema,
   enablePasswordReset: true,
+  enableReceptionistPermissions: true,
   createSuccessMessage: 'Receptionist created successfully. Use the email and password you entered to log in.',
 });
 
@@ -1116,9 +1513,10 @@ export const GPs = createStaffPage({
   enablePasswordReset: true,
   viewHeaderIcon: MedicalServicesOutlined,
   addButtonLabel: 'add GP',
+  permissionResource: 'gps',
   extraFields: [
-    { name: 'specialization', label: 'Specialization' },
-    { name: 'registration_number', label: 'Registration Number', hideInTable: true },
+    { name: 'specialization', label: 'Specialization', half: true },
+    { name: 'registration_number', label: 'Registration Number', hideInTable: true, half: true },
     { name: 'hospital', label: 'Practice Address', hideInTable: true },
     { name: 'availability', label: 'Availability', weekdaySelect: true },
   ],
@@ -1130,10 +1528,12 @@ export const AHPs = createStaffPage({
   endpoint: '/staff/ahps',
   codeField: 'ahp_code',
   codeLabel: 'ID',
+  hidePhoneColumn: true,
   enableView: true,
   enablePasswordReset: true,
   viewHeaderIcon: HealthAndSafetyOutlined,
   addButtonLabel: 'add AHP',
+  permissionResource: 'ahps',
   enableProfessionsManager: true,
   fieldOptionsEndpoint: '/preferences/ahp-professions',
   extraFields: [

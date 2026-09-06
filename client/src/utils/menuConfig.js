@@ -8,6 +8,11 @@ const CONFERENCE_SUBMENU = [
   { title: 'Reports', path: '/conferences?tab=reports', icon: 'Assessment' },
 ];
 
+const TASK_SUBMENU = [
+  { title: 'Assigned to Me', path: '/tasks?tab=inbox', icon: 'TaskAlt' },
+  { title: 'Assigned by Me', path: '/tasks?tab=assigned', icon: 'Person' },
+];
+
 const SETTINGS_SUBMENU = [
   { title: 'Preferences', path: '/preferences', icon: 'Tune' },
   { title: 'Profile', path: '/profile', icon: 'Person' },
@@ -48,11 +53,13 @@ export const MENU_CONFIG = {
     { title: 'Allied Health Professionals', path: '/ahps', icon: 'HealthAndSafety' },
     { section: 'Patient Management' },
     { title: 'Patients', path: '/patients', icon: 'LocalHospital' },
-    { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
+    { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
+    { title: 'Appointments', path: '/appointments', icon: 'Event' },
+    { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'Analytics' },
     { title: 'Reports', path: '/reports', icon: 'Assessment' },
     { title: 'Audit Logs', path: '/audit-logs', icon: 'History' },
-    { title: 'Join Time Report', path: '/join-time-report', icon: 'AccessTime' },
+    { title: 'Time Calculator', path: '/join-time-report', icon: 'AccessTime' },
     { section: 'System' },
     { title: 'Settings', icon: 'Settings', children: ADMIN_SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
@@ -64,8 +71,8 @@ export const MENU_CONFIG = {
     { title: 'Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Appointments', path: '/appointments', icon: 'Event' },
-    { title: 'Join Time Report', path: '/join-time-report', icon: 'AccessTime' },
-    { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
+    { title: 'Time Calculator', path: '/join-time-report', icon: 'AccessTime' },
+    { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'Staff / Clinical' },
     { title: 'General Practitioners', path: '/gps', icon: 'MedicalServices' },
     { title: 'Allied Health Professionals', path: '/ahps', icon: 'HealthAndSafety' },
@@ -80,7 +87,7 @@ export const MENU_CONFIG = {
     { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Medical Notes', path: '/medical-notes', icon: 'NoteAlt' },
-    { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
+    { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'System' },
     { title: 'Settings', icon: 'Settings', children: SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
@@ -92,7 +99,7 @@ export const MENU_CONFIG = {
     { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
     { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Patient Reports', path: '/patient-reports', icon: 'Description' },
-    { title: 'Tasks', path: '/tasks', icon: 'TaskAlt' },
+    { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'System' },
     { title: 'Settings', icon: 'Settings', children: SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
