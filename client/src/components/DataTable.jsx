@@ -38,6 +38,7 @@ const DataTable = ({
   onEdit,
   onDelete,
   onView,
+  renderLeadingActions,
   onResetPassword,
   searchPlaceholder = 'Search records...',
   actions = true,
@@ -256,19 +257,32 @@ const DataTable = ({
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
                   <FilterListOutlined sx={{ fontSize: 18, color: 'text.secondary', display: { xs: 'none', sm: 'block' } }} />
                   {filters.map((filter) => (
-                    <TextField
-                      key={filter.key}
-                      select
-                      size="small"
-                      label={filter.label}
-                      value={filter.value}
-                      onChange={(e) => filter.onChange(e.target.value)}
-                      sx={{ ...fieldSx, minWidth: 140 }}
-                    >
-                      {filter.options.map((opt) => (
-                        <MenuItem key={String(opt.value)} value={opt.value}>{opt.label}</MenuItem>
-                      ))}
-                    </TextField>
+                    filter.type === 'date' ? (
+                      <TextField
+                        key={filter.key}
+                        type="date"
+                        size="small"
+                        label={filter.label}
+                        value={filter.value || ''}
+                        onChange={(e) => filter.onChange(e.target.value)}
+                        sx={{ ...fieldSx, minWidth: 180 }}
+                        slotProps={{ inputLabel: { shrink: true } }}
+                      />
+                    ) : (
+                      <TextField
+                        key={filter.key}
+                        select
+                        size="small"
+                        label={filter.label}
+                        value={filter.value}
+                        onChange={(e) => filter.onChange(e.target.value)}
+                        sx={{ ...fieldSx, minWidth: 140 }}
+                      >
+                        {filter.options.map((opt) => (
+                          <MenuItem key={String(opt.value)} value={opt.value}>{opt.label}</MenuItem>
+                        ))}
+                      </TextField>
+                    )
                   ))}
                   {activeFilters.length > 0 && (
                     <Tooltip title="Clear all filters">
@@ -494,6 +508,7 @@ const DataTable = ({
                   {actions && (
                     <TableCell align="right" sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+                        {renderLeadingActions?.(row)}
                         {onView && (
                           <Tooltip title="View details">
                             <IconButton
@@ -588,7 +603,7 @@ const DataTable = ({
             onPageChange={(_, p) => onPageChange(p)}
             rowsPerPage={rowsPerPage}
             onRowsPerPageChange={(e) => onRowsPerPageChange(parseInt(e.target.value, 10))}
-            rowsPerPageOptions={[5, 10, 25, 50]}
+            rowsPerPageOptions={[5, 10, 12, 25, 50]}
             labelRowsPerPage="Rows:"
             sx={{
               '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {

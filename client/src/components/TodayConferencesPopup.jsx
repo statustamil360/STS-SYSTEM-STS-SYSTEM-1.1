@@ -11,12 +11,13 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import api from '../services/api';
-import { ROLES } from '../utils/constants';
+import { ROLES, isMeetingHostRole } from '../utils/constants';
 import useSystemDateTime from '../hooks/useSystemDateTime';
 import useCountdown, { getMeetingRemainingMs } from '../hooks/useCountdown';
 import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
 import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { formatClockTime } from '../utils/dateTime';
+import useLiveRefresh from '../hooks/useLiveRefresh';
 
 /** Exactly 2:00 on the countdown (120 000 ms remaining). */
 const REMIND_LATER_MS = 2 * 60 * 1000;
@@ -131,8 +132,8 @@ const TodayConferencesPopup = () => {
   const isGp = role === ROLES.GP;
   const isAhp = role === ROLES.AHP;
   /** Reception opens meetings; admins get the same alert as their supervisor. */
-  const isMeetingHost = role === ROLES.ADMIN
-    || (role === ROLES.RECEPTIONIST && can('conferences_page'));
+  const isMeetingHost = isMeetingHostRole(role)
+    && (role !== ROLES.RECEPTIONIST || can('conferences_page'));
   const isClinical = isGp || isAhp;
   const isWatcher = isClinical || isMeetingHost;
   const openWindowMs = openLeadMinutes * 60 * 1000;
@@ -159,6 +160,10 @@ const TodayConferencesPopup = () => {
       remindPrevRef.current[c.id] = getMeetingRemainingMs(c);
     });
   }, []);
+
+  useLiveRefresh('schedule:refresh', () => {
+    loadConferences().then((rows) => seedRemainingBaseline(rows || [])).catch(() => {});
+  });
 
   const openInitialPopup = useCallback((rows) => {
     if (!rows.length || !user?.id) return;

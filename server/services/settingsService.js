@@ -30,6 +30,13 @@ const readSetting = async (settingKey) => {
 const getBooleanSetting = async (settingKey, defaultWhenAbsent = true) => {
   const raw = await readSetting(settingKey);
   if (raw === null || raw === undefined || raw === '') return defaultWhenAbsent;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'boolean') return parsed;
+    if (typeof parsed === 'number') return parsed !== 0;
+  } catch {
+    /* raw string */
+  }
   return truthy(raw);
 };
 
@@ -42,12 +49,38 @@ const coerceNumericSetting = (settingKey, raw) => {
 
 const getNumericSetting = async (settingKey) => coerceNumericSetting(settingKey, await readSetting(settingKey));
 
+const getStringSetting = async (settingKey, fallback = '') => {
+  const raw = await readSetting(settingKey);
+  if (raw === null || raw === undefined) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'string') return parsed;
+  } catch {
+    /* raw string */
+  }
+  return String(raw);
+};
+
+const getSettingObject = async (settingKey, fallback = {}) => {
+  const raw = await readSetting(settingKey);
+  if (!raw) return { ...fallback };
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return { ...fallback, ...parsed };
+  } catch {
+    /* ignore */
+  }
+  return { ...fallback };
+};
+
 const clearSettingsCache = () => cache.clear();
 
 module.exports = {
   NUMERIC_SETTINGS,
   getBooleanSetting,
   getNumericSetting,
+  getStringSetting,
+  getSettingObject,
   coerceNumericSetting,
   clearSettingsCache,
 };

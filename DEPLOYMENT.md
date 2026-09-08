@@ -7,15 +7,17 @@ This guide covers deploying to a **VPS / cloud server** (Windows or Linux) with 
 ## Architecture (production)
 
 ```
-Browser  →  https://your-domain.com
+Browser  →  https://team.asterixmc.com
               ├── /          → React app (client/dist)
               ├── /api/*     → Express API
               └── /uploads/* → Profile & appointment files
                     ↓
               MySQL (amc_asterix)
+
+Video    →  https://meet.asterixmc.com  (Jitsi iframe)
 ```
 
-Video uses **self-hosted Jitsi** (`JITSI_BASE_URL`, default `https://meet.asterixmc.com`). Install commands for the Contabo VPS: [docs/JITSI_CONTABO.md](docs/JITSI_CONTABO.md). Optional fallback: **private WebRTC** (mediasoup). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md).
+Video uses **self-hosted Jitsi** at [https://meet.asterixmc.com](https://meet.asterixmc.com) (`JITSI_BASE_URL`). Install / iframe headers: [docs/JITSI_CONTABO.md](docs/JITSI_CONTABO.md). Recorded meetings still use **private WebRTC** (mediasoup + TURN). See [docs/WEBRTC_AAPANEL.md](docs/WEBRTC_AAPANEL.md).
 
 ---
 
@@ -91,7 +93,9 @@ JWT_EXPIRES_IN=1h
 JWT_REFRESH_EXPIRES_IN=7d
 
 UPLOAD_DIR=uploads
-CLIENT_URL=https://your-domain.com
+CLIENT_URL=https://team.asterixmc.com
+PUBLIC_URL=https://team.asterixmc.com
+CORS_ORIGINS=https://team.asterixmc.com
 
 VIDEO_PROVIDER=jitsi
 JITSI_BASE_URL=https://meet.asterixmc.com
@@ -109,7 +113,8 @@ MEDIASOUP_MAX_PORT=49999
 | Variable | Notes |
 |----------|--------|
 | `NODE_ENV` | Must be `production` |
-| `CLIENT_URL` | Public URL users open in browser (HTTPS recommended) |
+| `CLIENT_URL` | Must be `https://team.asterixmc.com` (guest invite links use this) |
+| `JITSI_BASE_URL` | Must be `https://meet.asterixmc.com` |
 | `JWT_*` | Generate unique secrets — never use demo values |
 | `DB_*` | Create dedicated MySQL user (not `root` in production) |
 
@@ -179,7 +184,7 @@ Ensure `server/.env` exists; PM2 loads env from the shell or use `env_file` in e
 curl http://localhost:5000/api/health
 ```
 
-Open in browser (via reverse proxy): `https://your-domain.com`
+Open in browser (via reverse proxy): `https://team.asterixmc.com`
 
 ---
 
@@ -190,16 +195,16 @@ Expose the app on **443** using **Nginx** (Linux example):
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name team.asterixmc.com;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name your-domain.com;
+    server_name team.asterixmc.com;
 
-    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/team.asterixmc.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/team.asterixmc.com/privkey.pem;
 
     client_max_body_size 20M;
 
@@ -216,9 +221,15 @@ server {
 }
 ```
 
-Use **Certbot** for free SSL: `certbot --nginx -d your-domain.com`
+Use **Certbot** for free SSL: `certbot --nginx -d team.asterixmc.com`
 
-Set `CLIENT_URL=https://your-domain.com` in `server/.env` and restart the app.
+Set `CLIENT_URL=https://team.asterixmc.com` in `server/.env` and restart the app.
+
+Jitsi stays on a **separate** host/site: `https://meet.asterixmc.com`. Its Nginx must allow embedding from the app:
+
+```nginx
+add_header Content-Security-Policy "frame-ancestors https://team.asterixmc.com https://meet.asterixmc.com 'self';" always;
+```
 
 ---
 
@@ -234,7 +245,9 @@ Set `CLIENT_URL=https://your-domain.com` in `server/.env` and restart the app.
 - [ ] `NODE_ENV=production` in `server/.env`
 - [ ] Strong `JWT_SECRET` and `JWT_REFRESH_SECRET`
 - [ ] Demo passwords changed
-- [ ] `CLIENT_URL` matches public HTTPS URL
+- [ ] `CLIENT_URL` / `PUBLIC_URL` / `CORS_ORIGINS` = `https://team.asterixmc.com`
+- [ ] `VIDEO_PROVIDER=jitsi` and `JITSI_BASE_URL=https://meet.asterixmc.com`
+- [ ] Jitsi `frame-ancestors` includes `https://team.asterixmc.com`
 - [ ] `npm run build` completed — `client/dist/` exists
 - [ ] MySQL seeded + migrations applied
 - [ ] `/api/health` returns success

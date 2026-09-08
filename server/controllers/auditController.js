@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { createAuditLog } = require('../middleware/auditLog');
+const { createNotification } = require('../services/notificationService');
 
 exports.getAll = async (req, res, next) => {
   try {
@@ -43,15 +44,12 @@ exports.exportLogs = async (req, res, next) => {
     await createAuditLog({ userId: req.user.id, action: 'export', entityType: 'audit_logs', ipAddress: req.ip });
 
     if (req.query.format === 'csv') {
-      await pool.execute(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-        [
-          req.user.id,
-          'Audit Log Export',
-          `Audit log CSV export completed (${rows.length} record${rows.length === 1 ? '' : 's'}).`,
-          'export',
-        ],
-      );
+      await createNotification({
+        userId: req.user.id,
+        title: 'Audit Log Export',
+        message: `Audit log CSV export completed (${rows.length} record${rows.length === 1 ? '' : 's'}).`,
+        type: 'export',
+      });
 
       const header = 'id,user_id,action,entity_type,entity_id,created_at\n';
       const csv = rows.map((r) => `${r.id},${r.user_id},${r.action},${r.entity_type},${r.entity_id},${r.created_at}`).join('\n');

@@ -1,7 +1,7 @@
 {
   "name": "amc-teleconference-system",
   "version": "1.0.0",
-  "description": "AMC Teleconference Management System",
+  "description": "AMC Teleconference",
   "private": true,
   "scripts": {
     "install:all": "npm install --prefix client --include=dev && npm install --prefix server",

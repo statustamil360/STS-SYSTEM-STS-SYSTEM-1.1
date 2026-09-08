@@ -3,17 +3,19 @@ import {
   Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
   Box, Typography, Stack, ToggleButton, ToggleButtonGroup, Button,
   IconButton, Tooltip, Paper, Tabs, Tab, CircularProgress, Divider, Chip, Pagination,
+  Autocomplete,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { useForm, Controller } from 'react-hook-form';
 import { toast } from 'react-toastify';
 import { useSelector } from 'react-redux';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   VideoCallOutlined, HistoryOutlined,
   EventAvailableOutlined, FolderOpenOutlined, AssessmentOutlined, DownloadOutlined,
   PictureAsPdfOutlined, GridOnOutlined, DescriptionOutlined, ArticleOutlined,
-  VisibilityOutlined, CloseOutlined, AccessTimeOutlined,
+  VisibilityOutlined, CloseOutlined, AccessTimeOutlined, PersonOutlined,
+  VideocamOutlined, VideocamOffOutlined,
 } from '@mui/icons-material';
 import DataTable from '../../components/DataTable';
 import ConferenceMeetingCard from '../../components/ConferenceMeetingCard';
@@ -27,8 +29,10 @@ import { ROLES, CONFERENCE_STATUS } from '../../utils/constants';
 import { sortMeetingsByCountdown } from '../../hooks/useCountdown';
 import useDocumentDownloadAccess from '../../hooks/useDocumentDownloadAccess';
 import useReceptionistPermissions from '../../hooks/useReceptionistPermissions';
+import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import useLiveRefresh from '../../hooks/useLiveRefresh';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
 import PageLoader from '../../components/PageLoader';
 import { PdfPreviewFrame, PdfPreviewToolbar, usePdfPreviewControls } from '../../components/PdfPreviewPane';
@@ -80,39 +84,50 @@ const CARDS_PER_PAGE = 15;
 
 const PdfDocumentIcon = () => (
   <Box
+    aria-hidden
     sx={{
-      width: 20,
-      height: 24,
+      width: 22,
+      height: 28,
       flexShrink: 0,
-      borderRadius: '4px',
-      background: 'linear-gradient(165deg, #FB7185 0%, #F43F5E 38%, #E11D48 72%, #BE123C 100%)',
-      boxShadow: '0 2px 6px rgba(225, 29, 72, 0.28)',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      pb: 0.25,
       position: 'relative',
-      overflow: 'hidden',
+      borderRadius: '3px 0 3px 3px',
+      bgcolor: '#E53935',
+      boxShadow: '0 1px 3px rgba(183, 28, 28, 0.35)',
+      display: 'flex',
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      pb: '5px',
       '&::before': {
         content: '""',
         position: 'absolute',
         top: 0,
         right: 0,
-        width: 7,
-        height: 7,
-        background: 'linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.35) 50%)',
+        width: 8,
+        height: 8,
+        bgcolor: '#FF8A80',
+        clipPath: 'polygon(0 0, 100% 100%, 0 100%)',
+      },
+      '&::after': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: 8,
+        height: 8,
+        bgcolor: 'background.paper',
+        clipPath: 'polygon(0 0, 100% 0, 100% 100%)',
       },
     }}
   >
-    <PictureAsPdfOutlined sx={{ color: '#fff', fontSize: 10, mb: 0 }} />
     <Typography
+      component="span"
       sx={{
         color: '#fff',
-        fontSize: 6,
+        fontSize: 7,
         fontWeight: 800,
-        letterSpacing: '0.06em',
+        letterSpacing: '0.04em',
         lineHeight: 1,
+        fontFamily: 'Arial, Helvetica, sans-serif',
       }}
     >
       PDF
@@ -127,10 +142,167 @@ const formatFileSize = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const patientDisplayName = (patient) => (
+  patient?.full_name
+  || `${patient?.first_name || ''} ${patient?.last_name || ''}`.trim()
+  || '—'
+);
+
+const patientOptionLabel = (patient) => {
+  const name = patientDisplayName(patient);
+  return patient?.patient_code ? `${name} · ${patient.patient_code}` : name;
+};
+
+const findExactPatient = (rows, query) => {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q || !rows?.length) return null;
+  const matches = rows.filter((patient) => {
+    const name = patientDisplayName(patient).toLowerCase();
+    const code = String(patient.patient_code || '').toLowerCase();
+    const id = String(patient.id);
+    const label = patientOptionLabel(patient).toLowerCase();
+    return name === q || code === q || id === q || label === q;
+  });
+  return matches.length === 1 ? matches[0] : null;
+};
+
+const ReportPatientSearch = ({ value, onChange, onQueryChange }) => {
+  const [inputValue, setInputValue] = useState(value ? patientDisplayName(value) : '');
+  const [options, setOptions] = useState(value ? [value] : []);
+  const [loading, setLoading] = useState(false);
+  const onChangeRef = useRef(onChange);
+  const onQueryChangeRef = useRef(onQueryChange);
+  onChangeRef.current = onChange;
+  onQueryChangeRef.current = onQueryChange;
+
+  useEffect(() => {
+    onQueryChangeRef.current?.(inputValue);
+  }, [inputValue]);
+
+  useEffect(() => {
+    const query = inputValue.trim();
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (query.length < 1) {
+        setOptions(value ? [value] : []);
+        return;
+      }
+      setLoading(true);
+      try {
+        const { data } = await api.get('/patients', { params: { search: query, limit: 25 } });
+        if (cancelled) return;
+        const rows = data.data ?? [];
+        const nextOptions = value && !rows.some((row) => String(row.id) === String(value.id))
+          ? [value, ...rows]
+          : rows;
+        setOptions(nextOptions);
+        const exact = findExactPatient(rows, query);
+        if (exact && String(value?.id) !== String(exact.id)) {
+          onChangeRef.current(exact);
+          setInputValue(patientDisplayName(exact));
+        }
+      } catch {
+        if (!cancelled) setOptions(value ? [value] : []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [inputValue, value]);
+
+  return (
+    <Autocomplete
+      fullWidth
+      options={options}
+      value={value}
+      inputValue={inputValue}
+      loading={loading}
+      autoHighlight
+      includeInputInList
+      filterOptions={(items) => items}
+      noOptionsText={
+        loading
+          ? 'Searching patients...'
+          : (inputValue.trim() ? 'No matching patients' : 'Type a name or patient ID')
+      }
+      getOptionLabel={(option) => {
+        if (!option || typeof option === 'string') return option || '';
+        return patientDisplayName(option);
+      }}
+      isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
+      onChange={(_, patient) => {
+        onChange(patient || null);
+        setInputValue(patient ? patientDisplayName(patient) : '');
+      }}
+      onInputChange={(_, next, reason) => {
+        if (reason === 'reset') return;
+        setInputValue(next);
+        if (reason === 'clear' || next === '') {
+          onChange(null);
+          return;
+        }
+        if (value) {
+          const typed = next.trim().toLowerCase();
+          const selectedName = patientDisplayName(value).toLowerCase();
+          const selectedCode = String(value.patient_code || '').toLowerCase();
+          const selectedId = String(value.id);
+          if (typed !== selectedName && typed !== selectedCode && typed !== selectedId) {
+            onChange(null);
+          }
+        }
+      }}
+      renderOption={(props, option) => {
+        const { key, ...itemProps } = props;
+        return (
+          <Box component="li" key={key} {...itemProps}>
+            <Box sx={{ py: 0.25 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                {patientDisplayName(option)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {option.patient_code || `ID ${option.id}`}
+              </Typography>
+            </Box>
+          </Box>
+        );
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          size="small"
+          label="Patient"
+          placeholder="Type name or ID, then pick the patient"
+          InputLabelProps={{ shrink: true, ...params.InputLabelProps }}
+          InputProps={{
+            ...params.InputProps,
+            startAdornment: (
+              <>
+                <PersonOutlined sx={{ fontSize: 18, color: 'text.secondary', mr: 0.5 }} />
+                {params.InputProps?.startAdornment}
+              </>
+            ),
+            endAdornment: (
+              <>
+                {loading ? <CircularProgress color="inherit" size={16} /> : null}
+                {params.InputProps?.endAdornment}
+              </>
+            ),
+          }}
+        />
+      )}
+    />
+  );
+};
+
 const Conferences = () => {
   const { user } = useSelector((state) => state.auth);
+  const navigate = useNavigate();
   const canDownloadDocuments = useDocumentDownloadAccess();
   const { can } = useReceptionistPermissions();
+  const { formatTime, formatStoredClock } = useSystemDateTime();
   const canViewDocuments = can('documents_view');
   const canExportReports = can('reports_export');
   const availableTabs = useMemo(() => CONFERENCE_TABS.filter((tab) => {
@@ -140,6 +312,7 @@ const Conferences = () => {
   }), [canViewDocuments, canExportReports]);
   const isClinical = [ROLES.GP, ROLES.AHP].includes(user?.role);
   const canViewAttendance = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(user?.role);
+  const canPlayRecordings = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
   const canUpdateStatus = isClinical;
   const [todayMeetings, setTodayMeetings] = useState([]);
   const [scheduleRange, setScheduleRange] = useState('today');
@@ -150,6 +323,10 @@ const Conferences = () => {
   const [ending, setEnding] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [historyDate, setHistoryDate] = useState('');
+  const [historyDateScope, setHistoryDateScope] = useState('');
+  const [documentsDate, setDocumentsDate] = useState('');
+  const [documentsDateScope, setDocumentsDateScope] = useState('');
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -159,7 +336,7 @@ const Conferences = () => {
   const setActiveTab = (value) => setSearchParams({ tab: value }, { replace: true });
 
   const [sortTick, setSortTick] = useState(() => Date.now());
-  const { register, handleSubmit, reset, control } = useForm();
+  const { handleSubmit, reset, control } = useForm();
 
   const [documentsSearch, setDocumentsSearch] = useState('');
 
@@ -171,7 +348,10 @@ const Conferences = () => {
     docPreview.mode === 'pdf' ? docPreview.url : '',
     Boolean(docPreview.open && docPreview.mode === 'pdf' && docPreview.url && !docPreview.loading),
   );
-  const [reportFilters, setReportFilters] = useState({ start_date: '', end_date: '', status: '' });
+  const [reportFilters, setReportFilters] = useState({ start_date: '', end_date: '', status: '', patient_id: '' });
+  const [reportPatient, setReportPatient] = useState(null);
+  const [reportPatientQuery, setReportPatientQuery] = useState('');
+  const [patientSearchKey, setPatientSearchKey] = useState(0);
   const [exporting, setExporting] = useState(null);
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [attendanceConferenceId, setAttendanceConferenceId] = useState(null);
@@ -260,12 +440,14 @@ const Conferences = () => {
         scope: 'history',
         search: search || undefined,
         status: statusFilter || undefined,
+        date: historyDateScope ? undefined : (historyDate || undefined),
+        date_scope: historyDateScope || undefined,
         page: pageNum,
         limit,
       },
     });
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [search, statusFilter]);
+  }, [search, statusFilter, historyDate, historyDateScope]);
 
   const {
     rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload: reloadHistory, error: historyError,
@@ -275,12 +457,14 @@ const Conferences = () => {
     const { data } = await api.get('/conferences/documents', {
       params: {
         search: documentsSearch || undefined,
+        date: documentsDateScope ? undefined : (documentsDate || undefined),
+        date_scope: documentsDateScope || undefined,
         page: pageNum,
         limit,
       },
     });
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [documentsSearch]);
+  }, [documentsSearch, documentsDate, documentsDateScope]);
 
   const {
     rows: documents,
@@ -319,6 +503,10 @@ const Conferences = () => {
   }, [activeTab, fetchToday, reloadHistory, reloadDocuments]);
 
   usePageRefreshRegister(refreshPage);
+  useLiveRefresh('schedule:refresh', () => {
+    fetchToday({ silent: true });
+    if (activeTab === 'history') reloadHistory();
+  });
 
   // Keep the tab in the URL so sidebar sub-menu links stay highlighted.
   useEffect(() => {
@@ -370,7 +558,7 @@ const Conferences = () => {
     setDocPreview({ open: false, loading: false, url: '', fileName: '', mode: null, html: '', row: null });
   }, [revokePreviewUrl]);
 
-  const openDocument = async (row, { download = false } = {}) => {
+  const openDocument = useCallback(async (row, { download = false } = {}) => {
     if (download && !canDownloadDocuments) {
       toast.error('Document download is not allowed for your role');
       return;
@@ -472,9 +660,29 @@ const Conferences = () => {
       toast.error('Failed to open document');
       closeDocPreview();
     }
-  };
+  }, [canDownloadDocuments, revokePreviewUrl, closeDocPreview]);
 
   const handleExport = async (format) => {
+    let patientId = reportPatient?.id || reportFilters.patient_id || '';
+    const typed = reportPatientQuery.trim();
+
+    if (typed && !patientId) {
+      try {
+        const { data } = await api.get('/patients', { params: { search: typed, limit: 25 } });
+        const exact = findExactPatient(data.data ?? [], typed);
+        if (!exact) {
+          toast.error('Pick a patient from the list, or type the full name or ID exactly');
+          return;
+        }
+        patientId = exact.id;
+        setReportPatient(exact);
+        setReportFilters((f) => ({ ...f, patient_id: String(exact.id) }));
+      } catch {
+        toast.error('Could not verify the patient. Pick a name from the list.');
+        return;
+      }
+    }
+
     setExporting(format);
     try {
       const { data } = await api.get('/conferences/export', {
@@ -483,6 +691,7 @@ const Conferences = () => {
           status: reportFilters.status || undefined,
           start_date: reportFilters.start_date || undefined,
           end_date: reportFilters.end_date || undefined,
+          patient_id: patientId || undefined,
         },
         responseType: 'blob',
       });
@@ -505,8 +714,6 @@ const Conferences = () => {
   };
 
   const documentColumns = useMemo(() => [
-    { field: 'conference_code', headerName: 'Conference ID' },
-    { field: 'patient_name', headerName: 'Patient' },
     {
       field: 'document_code',
       headerName: 'Document',
@@ -519,19 +726,15 @@ const Conferences = () => {
         </Stack>
       ),
     },
-    { field: 'file_size', headerName: 'Size', render: (r) => formatFileSize(r.file_size) },
-    {
-      field: 'assigned_by_name',
-      headerName: 'Assigned By',
-      render: (r) => r.assigned_by_name || '—',
-    },
-    { field: 'scheduled_date', headerName: 'Meeting Date', render: (r) => formatCalendarDate(r.scheduled_date) },
+    { field: 'conference_code', headerName: 'Conference ID' },
+    { field: 'patient_name', headerName: 'Patient' },
+    { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
     {
       field: 'scheduled_time',
-      headerName: 'Meeting Time',
+      headerName: 'Time',
       render: (r) => formatClockTime(r.scheduled_time),
     },
-    { field: 'status', headerName: 'Status', type: 'status' },
+    { field: 'file_size', headerName: 'Size', render: (r) => formatFileSize(r.file_size) },
     {
       field: 'actions',
       headerName: 'File',
@@ -567,57 +770,110 @@ const Conferences = () => {
         </Stack>
       ),
     },
-  ], [canDownloadDocuments]);
+  ], [canDownloadDocuments, openDocument]);
 
-  const columns = useMemo(() => {
-    const base = [
-      { field: 'conference_code', headerName: 'Conference ID' },
-      { field: 'patient_name', headerName: 'Patient' },
-      { field: 'assigned_by_name', headerName: 'Assigned By', render: (r) => r.assigned_by_name || '—' },
-      { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
-      {
-        field: 'started_time',
-        headerName: 'Start Time',
-        render: (r) => (r.started_time ? formatClockTime(r.started_time) : '—'),
-      },
-      {
-        field: 'ended_time',
-        headerName: 'End Time',
-        render: (r) => (r.ended_time ? formatClockTime(r.ended_time) : '—'),
-      },
-      { field: 'status', headerName: 'Status', type: 'status' },
-    ];
+  const columns = useMemo(() => [
+    { field: 'conference_code', headerName: 'Conference ID' },
+    { field: 'patient_name', headerName: 'Patient' },
+    { field: 'scheduled_date', headerName: 'Date', render: (r) => formatCalendarDate(r.scheduled_date) },
+    {
+      field: 'started_time',
+      headerName: 'Start Time',
+      render: (r) => (r.accepted_at
+        ? formatTime(r.accepted_at)
+        : formatStoredClock(r.started_time, r.scheduled_date)),
+    },
+    {
+      field: 'ended_time',
+      headerName: 'End Time',
+      render: (r) => (r.ended_at
+        ? formatTime(r.ended_at)
+        : formatStoredClock(r.ended_time, r.scheduled_date)),
+    },
+    { field: 'assigned_by_name', headerName: 'Assigned By', render: (r) => r.assigned_by_name || '—' },
+    { field: 'status', headerName: 'Status', type: 'status' },
+  ], [formatTime, formatStoredClock]);
 
-    if (canViewAttendance) {
-      base.push({
-        field: 'join_time',
-        headerName: 'Join Time',
-        sortable: false,
-        render: (r) => (
-          r.status === 'completed' ? (
-            <Tooltip title="View participant join times (salary basis)">
+  const renderHistoryLeadingActions = (r) => {
+    const recorded = r.recording_status === 'ready';
+    const showRecording = ['completed', 'cancelled'].includes(r.status);
+    return (
+      <>
+        {showRecording && (
+          <Tooltip title={recorded ? (canPlayRecordings ? 'Recorded — play video' : 'Recorded') : 'Not recorded'}>
+            <span>
               <IconButton
                 size="small"
-                onClick={() => openAttendance(r)}
+                disabled={!recorded}
+                onClick={recorded && canPlayRecordings ? () => navigate(`/videos?recording=${r.recording_id}`) : undefined}
                 sx={{
-                  bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
-                  '&:hover': { bgcolor: (theme) => alpha(theme.palette.warning.main, 0.18) },
+                  bgcolor: (theme) => alpha(recorded ? theme.palette.success.main : theme.palette.action.disabled, recorded ? 0.1 : 0.08),
+                  '&:hover': { bgcolor: (theme) => alpha(theme.palette.success.main, 0.18) },
                 }}
               >
-                <AccessTimeOutlined sx={{ fontSize: 17 }} color="warning" />
+                {recorded
+                  ? <VideocamOutlined sx={{ fontSize: 17 }} color="success" />
+                  : <VideocamOffOutlined sx={{ fontSize: 17 }} color="disabled" />}
               </IconButton>
-            </Tooltip>
-          ) : (
-            <Typography variant="body2" color="text.secondary">—</Typography>
-          )
-        ),
-      });
-    }
+            </span>
+          </Tooltip>
+        )}
+        {canViewAttendance && r.status === 'cancelled' && (
+          <Tooltip title="No join times (cancelled)">
+            <span>
+              <IconButton
+                size="small"
+                disabled
+                sx={{
+                  bgcolor: (theme) => alpha(theme.palette.action.disabled, 0.08),
+                }}
+              >
+                <AccessTimeOutlined sx={{ fontSize: 17 }} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )}
+        {canViewAttendance && r.status === 'completed' && (
+          <Tooltip title="View participant join times (salary basis)">
+            <IconButton
+              size="small"
+              onClick={() => openAttendance(r)}
+              sx={{
+                bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
+                '&:hover': { bgcolor: (theme) => alpha(theme.palette.warning.main, 0.18) },
+              }}
+            >
+              <AccessTimeOutlined sx={{ fontSize: 17 }} color="warning" />
+            </IconButton>
+          </Tooltip>
+        )}
+      </>
+    );
+  };
 
-    return base;
-  }, [canViewAttendance]);
+  const dateScopeOptions = [
+    { value: '', label: 'All' },
+    { value: 'today', label: 'Today' },
+    { value: 'tomorrow', label: 'Tomorrow' },
+    { value: 'week', label: 'Week' },
+    { value: 'month', label: 'Month' },
+  ];
 
   const conferenceFilters = [
+    {
+      key: 'history_date',
+      label: 'Select date',
+      type: 'date',
+      value: historyDate,
+      onChange: (v) => { setHistoryDate(v); if (v) setHistoryDateScope(''); setPage(0); },
+    },
+    {
+      key: 'history_date_scope',
+      label: 'Date',
+      value: historyDateScope,
+      onChange: (v) => { setHistoryDateScope(v); if (v) setHistoryDate(''); setPage(0); },
+      options: dateScopeOptions,
+    },
     {
       key: 'status',
       label: 'Status',
@@ -628,6 +884,23 @@ const Conferences = () => {
         { value: 'completed', label: 'Completed' },
         { value: 'cancelled', label: 'Cancelled' },
       ],
+    },
+  ];
+
+  const documentFilters = [
+    {
+      key: 'documents_date',
+      label: 'Select date',
+      type: 'date',
+      value: documentsDate,
+      onChange: (v) => { setDocumentsDate(v); if (v) setDocumentsDateScope(''); setDocumentsPage(0); },
+    },
+    {
+      key: 'documents_date_scope',
+      label: 'Date',
+      value: documentsDateScope,
+      onChange: (v) => { setDocumentsDateScope(v); if (v) setDocumentsDate(''); setDocumentsPage(0); },
+      options: dateScopeOptions,
     },
   ];
 
@@ -828,6 +1101,7 @@ const Conferences = () => {
           onSearch={(v) => { setSearch(v); setPage(0); }}
           searchPlaceholder="Search by conference ID, patient, or assigned by..."
           filters={conferenceFilters}
+          renderLeadingActions={renderHistoryLeadingActions}
           onView={openHistoryView}
           onEdit={canUpdateStatus ? handleOpen : undefined}
           actions
@@ -848,6 +1122,7 @@ const Conferences = () => {
           onRowsPerPageChange={(v) => { setDocumentsPerPage(v); setDocumentsPage(0); }}
           onSearch={(v) => { setDocumentsSearch(v); setDocumentsPage(0); }}
           searchPlaceholder="Search by document ID, conference ID, or patient..."
+          filters={documentFilters}
           actions={false}
           defaultSortField="scheduled_date"
           defaultSortOrder="desc"
@@ -909,7 +1184,7 @@ const Conferences = () => {
             </Typography>
 
             <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -920,7 +1195,7 @@ const Conferences = () => {
                   slotProps={{ inputLabel: { shrink: true } }}
                 />
               </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -931,7 +1206,18 @@ const Conferences = () => {
                   slotProps={{ inputLabel: { shrink: true } }}
                 />
               </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <ReportPatientSearch
+                  key={patientSearchKey}
+                  value={reportPatient}
+                  onChange={(patient) => {
+                    setReportPatient(patient);
+                    setReportFilters((f) => ({ ...f, patient_id: patient ? String(patient.id) : '' }));
+                  }}
+                  onQueryChange={setReportPatientQuery}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -971,13 +1257,18 @@ const Conferences = () => {
               >
                 Export Format
               </Typography>
-              {(reportFilters.start_date || reportFilters.end_date || reportFilters.status) && (
+              {(reportFilters.start_date || reportFilters.end_date || reportFilters.status || reportFilters.patient_id) && (
                 <Chip
                   size="small"
                   label="Filters applied"
                   color="primary"
                   variant="outlined"
-                  onDelete={() => setReportFilters({ start_date: '', end_date: '', status: '' })}
+                  onDelete={() => {
+                    setReportPatient(null);
+                    setReportPatientQuery('');
+                    setPatientSearchKey((key) => key + 1);
+                    setReportFilters({ start_date: '', end_date: '', status: '', patient_id: '' });
+                  }}
                   sx={{ fontWeight: 600 }}
                 />
               )}

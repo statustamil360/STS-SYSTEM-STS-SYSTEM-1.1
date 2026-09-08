@@ -15,6 +15,7 @@ import api from '../../services/api';
 import { updateSystemSettings } from '../../redux/slices/settingsSlice';
 import {
   setCalendarPopupEnabled,
+  setTodoPopupEnabled,
   setConferencePopupEnabled,
   setTaskAlertsEnabled,
   setDashboardCardEnabled,
@@ -61,11 +62,15 @@ const PreferenceToggleRow = ({ title, description, checked, onChange, disabled, 
   </Stack>
 );
 
-const AlertsAndPopupsCard = ({ userId }) => {
+const AlertsAndPopupsCard = ({ userId, role }) => {
   const dispatch = useDispatch();
   const calendarEnabled = useSelector((state) => state.ui.calendarPopupEnabled);
+  const todoEnabled = useSelector((state) => state.ui.todoPopupEnabled);
   const conferenceEnabled = useSelector((state) => state.ui.conferencePopupEnabled);
   const taskAlertsEnabled = useSelector((state) => state.ui.taskAlertsEnabled);
+  const showCalendarToggle = [ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP].includes(role);
+  const showConferenceToggle = [ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP].includes(role);
+  const showTaskToggle = [ROLES.ADMIN, ROLES.RECEPTIONIST, ROLES.GP, ROLES.AHP].includes(role);
 
   return (
     <Paper elevation={0} sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2.5, border: '1px solid', borderColor: alpha('#64748B', 0.18) }}>
@@ -79,33 +84,48 @@ const AlertsAndPopupsCard = ({ userId }) => {
         Choose which popups and task alerts appear while you work.
       </Typography>
       <Stack spacing={1}>
+        {showCalendarToggle && (
+          <PreferenceToggleRow
+            title="Show calendar popup"
+            description={calendarEnabled ? 'Calendar button is visible' : 'Calendar button is hidden'}
+            checked={calendarEnabled}
+            onChange={(e) => {
+              dispatch(setCalendarPopupEnabled({ enabled: e.target.checked, userId }));
+              toast.success(e.target.checked ? 'Calendar popup enabled' : 'Calendar popup disabled');
+            }}
+          />
+        )}
         <PreferenceToggleRow
-          title="Show calendar popup"
-          description={calendarEnabled ? 'Calendar button is visible' : 'Calendar button is hidden'}
-          checked={calendarEnabled}
+          title="Show to-do list popup"
+          description={todoEnabled ? 'To-do button is visible' : 'To-do button is hidden'}
+          checked={todoEnabled}
           onChange={(e) => {
-            dispatch(setCalendarPopupEnabled({ enabled: e.target.checked, userId }));
-            toast.success(e.target.checked ? 'Calendar popup enabled' : 'Calendar popup disabled');
+            dispatch(setTodoPopupEnabled({ enabled: e.target.checked, userId }));
+            toast.success(e.target.checked ? 'To-do list popup enabled' : 'To-do list popup disabled');
           }}
         />
-        <PreferenceToggleRow
-          title="Today's Conferences popup"
-          description={conferenceEnabled ? 'Meeting start popup is shown' : 'Meeting start popup is hidden'}
-          checked={conferenceEnabled}
-          onChange={(e) => {
-            dispatch(setConferencePopupEnabled({ enabled: e.target.checked, userId }));
-            toast.success(e.target.checked ? "Today's Conferences popup enabled" : "Today's Conferences popup disabled");
-          }}
-        />
-        <PreferenceToggleRow
-          title="Task notifications"
-          description={taskAlertsEnabled ? 'New task and update toasts are shown' : 'Task alert toasts are hidden'}
-          checked={taskAlertsEnabled}
-          onChange={(e) => {
-            dispatch(setTaskAlertsEnabled({ enabled: e.target.checked, userId }));
-            toast.success(e.target.checked ? 'Task notifications enabled' : 'Task notifications disabled');
-          }}
-        />
+        {showConferenceToggle && (
+          <PreferenceToggleRow
+            title="Today's Conferences popup"
+            description={conferenceEnabled ? 'Meeting start popup is shown' : 'Meeting start popup is hidden'}
+            checked={conferenceEnabled}
+            onChange={(e) => {
+              dispatch(setConferencePopupEnabled({ enabled: e.target.checked, userId }));
+              toast.success(e.target.checked ? "Today's Conferences popup enabled" : "Today's Conferences popup disabled");
+            }}
+          />
+        )}
+        {showTaskToggle && (
+          <PreferenceToggleRow
+            title="Task notifications"
+            description={taskAlertsEnabled ? 'New task and update toasts are shown' : 'Task alert toasts are hidden'}
+            checked={taskAlertsEnabled}
+            onChange={(e) => {
+              dispatch(setTaskAlertsEnabled({ enabled: e.target.checked, userId }));
+              toast.success(e.target.checked ? 'Task notifications enabled' : 'Task notifications disabled');
+            }}
+          />
+        )}
       </Stack>
     </Paper>
   );
@@ -151,7 +171,7 @@ const DashboardCardsCard = ({ userId, role }) => {
 
 const DisplayPreferences = ({ userId, role }) => (
   <Stack spacing={2.5}>
-    <AlertsAndPopupsCard userId={userId} />
+    <AlertsAndPopupsCard userId={userId} role={role} />
     <DashboardCardsCard userId={userId} role={role} />
   </Stack>
 );

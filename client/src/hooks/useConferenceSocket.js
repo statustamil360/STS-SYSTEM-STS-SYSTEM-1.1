@@ -54,6 +54,10 @@ const useConferenceSocket = (conferenceId, second, third) => {
       handlersRef.current.onConferenceEnded?.(payload);
     });
 
+    socket.on('recording-flush', (payload) => {
+      handlersRef.current.onRecordingFlush?.(payload);
+    });
+
     return () => {
       socket.emit('leave-conference', { conferenceId });
       socket.disconnect();

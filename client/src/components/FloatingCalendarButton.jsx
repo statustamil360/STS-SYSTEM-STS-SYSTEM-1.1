@@ -8,6 +8,7 @@ import SimpleCalendar from './SimpleCalendar';
 import api from '../services/api';
 import { ROLES } from '../utils/constants';
 import useSystemDateTime from '../hooks/useSystemDateTime';
+import useLiveRefresh from '../hooks/useLiveRefresh';
 
 const popPulse = keyframes`
   0%, 100% { transform: scale(1); box-shadow: 0 8px 24px rgba(13, 148, 136, 0.35); }
@@ -64,6 +65,10 @@ const FloatingCalendarButton = () => {
     if (open) loadEvents();
   }, [open, loadEvents]);
 
+  useLiveRefresh('schedule:refresh', () => {
+    if (open) loadEvents();
+  });
+
   if (!CALENDAR_ROLES.includes(role)) return null;
   if (!calendarPopupEnabled) return null;
   if (role === ROLES.RECEPTIONIST && receptionist_calendar_widget === false) return null;
@@ -75,15 +80,19 @@ const FloatingCalendarButton = () => {
           color="primary"
           aria-label="Open calendar"
           onClick={() => setOpen(true)}
+          size="small"
           sx={{
             position: 'fixed',
-            bottom: 28,
-            right: 28,
+            bottom: 24,
+            right: 24,
+            width: 44,
+            height: 44,
+            minHeight: 44,
             zIndex: (theme) => theme.zIndex.speedDial,
             animation: `${popPulse} 2.4s ease-in-out infinite`,
           }}
         >
-          <CalendarMonthOutlined />
+          <CalendarMonthOutlined sx={{ fontSize: 20 }} />
         </Fab>
       </Zoom>
 

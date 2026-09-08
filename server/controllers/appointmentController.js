@@ -6,8 +6,29 @@ const { uploadDir } = require('../config/jwt');
 const { syncConferenceFromAppointment, cancelConferenceForAppointment, deleteConferenceForAppointment } = require('../services/conferenceSync');
 const { processTimedOutConferences } = require('../services/conferenceTimeoutService');
 const { parseArrayField, parseGpIds } = require('../utils/appointmentAssignments');
+const { emitScheduleChanged } = require('../services/socketService');
+const { hasPermission } = require('../services/receptionistPermissionService');
+const { ensureSchema: ensureRecordingSchema, parseBool } = require('../services/conferenceRecordingService');
 
 const parseAhpAssignments = parseArrayField;
+
+const resolveRecordMeeting = async (req, { required = false } = {}) => {
+  await ensureRecordingSchema();
+  if (req.body.record_meeting === undefined && !required) return null;
+  const requested = parseBool(req.body.record_meeting);
+  if (requested && req.user.role === 'receptionist') {
+    const allowed = await hasPermission(req.user.id, 'conference_record');
+    if (!allowed) {
+      const err = new Error('You do not have permission to record meetings');
+      err.status = 403;
+      throw err;
+    }
+  }
+  if (requested && !['receptionist', 'admin', 'super_admin'].includes(req.user.role)) {
+    return 0;
+  }
+  return requested ? 1 : 0;
+};
 
 const replaceGpAssignments = async (conn, appointmentId, gpIds) => {
   await conn.execute('DELETE FROM appointment_gps WHERE appointment_id = ?', [appointmentId]);
@@ -52,6 +73,7 @@ const appointmentSelectBase = `
   SELECT a.*,
     CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
     p.patient_code,
+    DATE_FORMAT(p.dob, '%Y-%m-%d') AS patient_dob,
     CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
     g.gp_code,
     (
@@ -99,6 +121,10 @@ const fetchLinkedConference = async (appointmentId) => {
       CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
       CONCAT(gp_p.first_name, ' ', gp_p.last_name) AS gp_name,
       CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) AS ahp_name,
+      COALESCE(
+        NULLIF(TRIM(CONCAT(COALESCE(cb_p.first_name, ''), ' ', COALESCE(cb_p.last_name, ''))), ''),
+        cb.username
+      ) AS assigned_by_name,
       (
         SELECT GROUP_CONCAT(
           CONCAT(TRIM(CONCAT(cp_p.first_name, ' ', cp_p.last_name)), ' (', cp.role_in_conference, ')')
@@ -115,6 +141,8 @@ const fetchLinkedConference = async (appointmentId) => {
      LEFT JOIN user_profiles gp_p ON gp.user_id = gp_p.user_id
      LEFT JOIN allied_health_professionals ahp ON c.ahp_id = ahp.id
      LEFT JOIN user_profiles ahp_p ON ahp.user_id = ahp_p.user_id
+     LEFT JOIN users cb ON cb.id = c.created_by
+     LEFT JOIN user_profiles cb_p ON cb_p.user_id = cb.id
      WHERE c.appointment_id = ?
      ORDER BY c.id DESC LIMIT 1`,
     [appointmentId]
@@ -148,6 +176,28 @@ const fetchAppointmentDetails = async (id) => {
     ? gpRows
     : (rows[0].gp_id ? [{ gp_id: rows[0].gp_id, gp_code: rows[0].gp_code, gp_name: rows[0].gp_name }] : []);
 
+  const conference = await fetchLinkedConference(id);
+  let guests = [];
+  if (conference?.id) {
+    try {
+      const [guestRows] = await pool.execute(
+        `SELECT guest_name, guest_role
+         FROM conference_guest_access
+         WHERE conference_id = ? AND revoked_at IS NULL
+         ORDER BY id`,
+        [conference.id]
+      );
+      guests = guestRows.map((row) => ({
+        ...row,
+        label: row.guest_role
+          ? `${row.guest_name} (${String(row.guest_role).replace(/_/g, ' ')})`
+          : row.guest_name,
+      }));
+    } catch {
+      guests = [];
+    }
+  }
+
   return {
     ...rows[0],
     gp_assignments: gpAssignments,
@@ -157,7 +207,9 @@ const fetchAppointmentDetails = async (id) => {
       ...f,
       url: `/uploads/${path.basename(f.file_path)}`,
     })),
-    conference: await fetchLinkedConference(id),
+    conference,
+    guests,
+    guest_summary: guests.map((g) => g.label).filter(Boolean).join('; ') || null,
   };
 };
 
@@ -201,10 +253,9 @@ exports.getAll = async (req, res, next) => {
         OR a.title LIKE ?
         OR a.appointment_code LIKE ?
         OR a.important_note LIKE ?
-        OR a.comments LIKE ?
       )`;
       const term = `%${search}%`;
-      params.push(term, term, term, term, term);
+      params.push(term, term, term, term);
     }
 
     const [countResult] = await pool.execute(
@@ -255,7 +306,6 @@ exports.create = async (req, res, next) => {
       appointment_time,
       title,
       important_note,
-      comments,
       patient_previous_records,
       notes,
       status = 'scheduled',
@@ -272,6 +322,8 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Patient, at least one GP, and title are required' });
     }
 
+    const recordMeeting = await resolveRecordMeeting(req, { required: true });
+
     await ensureAppointmentSequence(conn);
     await conn.beginTransaction();
     const appointmentCode = await allocateAppointmentCode(conn);
@@ -279,8 +331,9 @@ exports.create = async (req, res, next) => {
 
     const [result] = await conn.execute(
       `INSERT INTO appointments (
-        appointment_code, patient_id, gp_id, ahp_id, title, important_note, comments,
-        patient_previous_records, appointment_date, appointment_time, status, notes, created_by
+        appointment_code, patient_id, gp_id, ahp_id, title, important_note,
+        patient_previous_records, appointment_date, appointment_time, status, notes, created_by,
+        record_meeting
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         appointmentCode,
@@ -289,13 +342,13 @@ exports.create = async (req, res, next) => {
         firstAhpId,
         title.trim(),
         important_note || null,
-        comments || null,
         patient_previous_records || null,
         appointment_date,
         appointment_time,
         status,
         notes || null,
         req.user.id,
+        recordMeeting,
       ]
     );
 
@@ -333,6 +386,11 @@ exports.create = async (req, res, next) => {
     await conn.commit();
     const created = await fetchAppointmentDetails(appointmentId);
     res.status(201).json({ success: true, message: 'Appointment booked successfully', data: created });
+    emitScheduleChanged({ type: 'appointment-created', appointmentId });
+    setImmediate(() => {
+      const { notifyAppointmentCreated } = require('../services/adminNotificationService');
+      notifyAppointmentCreated(created);
+    });
   } catch (err) {
     await conn.rollback();
     if (err.code === 'ER_DUP_ENTRY') {
@@ -368,11 +426,13 @@ exports.update = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'At least one GP is required' });
     }
 
+    const recordMeeting = await resolveRecordMeeting(req);
+
     await conn.beginTransaction();
 
     const fields = [
       'patient_id', 'appointment_date', 'appointment_time', 'status',
-      'title', 'important_note', 'comments', 'patient_previous_records', 'notes',
+      'title', 'important_note', 'patient_previous_records', 'notes',
       'cancelled_reason',
       ...(gpIds ? [] : ['gp_id']),
     ];
@@ -384,6 +444,11 @@ exports.update = async (req, res, next) => {
         values.push(req.body[f] === '' ? null : req.body[f]);
       }
     });
+
+    if (recordMeeting !== null) {
+      updates.push('record_meeting = ?');
+      values.push(recordMeeting);
+    }
 
     if (gpIds) {
       updates.push('gp_id = ?');
@@ -435,6 +500,16 @@ exports.update = async (req, res, next) => {
     await conn.commit();
     const updated = await fetchAppointmentDetails(id);
     res.json({ success: true, message: 'Appointment updated', data: updated });
+    emitScheduleChanged({ type: 'appointment-updated', appointmentId: Number(id) });
+    if (req.body.status === 'cancelled') {
+      setImmediate(() => {
+        const { notifyAppointmentCancelled } = require('../services/adminNotificationService');
+        notifyAppointmentCancelled({
+          ...updated,
+          cancelled_reason: req.body.cancelled_reason || updated.cancelled_reason,
+        });
+      });
+    }
   } catch (err) {
     await conn.rollback();
     if (err.code === 'ER_DUP_ENTRY') {
@@ -454,6 +529,7 @@ exports.remove = async (req, res, next) => {
     await conn.execute('DELETE FROM appointments WHERE id = ?', [req.params.id]);
     await conn.commit();
     res.json({ success: true, message: 'Appointment deleted' });
+    emitScheduleChanged({ type: 'appointment-deleted', appointmentId: Number(req.params.id) });
   } catch (err) {
     await conn.rollback();
     next(err);

@@ -37,6 +37,7 @@ export const ConferenceSessionProvider = ({ children }) => {
     toggleCam: () => {},
     hangupJitsi: () => {},
     endJitsi: () => {},
+    flushRecording: async () => {},
   });
   const leaveSentRef = useRef(false);
   const leavingRef = useRef(false);
@@ -86,6 +87,7 @@ export const ConferenceSessionProvider = ({ children }) => {
   const startSession = useCallback((nextSession) => {
     const prev = sessionRef.current;
     if (prev && String(prev.conferenceId) !== String(nextSession.conferenceId)) {
+      void mediaApiRef.current.flushRecording?.();
       mediaApiRef.current.hangupJitsi();
       mediaApiRef.current.leaveVideo();
       recordLeave(prev.conferenceId);
@@ -130,6 +132,7 @@ export const ConferenceSessionProvider = ({ children }) => {
     if (leavingRef.current || endingRef.current) return;
     leavingRef.current = true;
     const conferenceId = sessionRef.current?.conferenceId;
+    await mediaApiRef.current.flushRecording?.();
     mediaApiRef.current.hangupJitsi();
     mediaApiRef.current.leaveVideo();
     await recordLeave(conferenceId);
@@ -137,22 +140,26 @@ export const ConferenceSessionProvider = ({ children }) => {
     goAfterLeave();
   }, [clearSession, goAfterLeave, recordLeave]);
 
-  const endSession = useCallback(async () => {
+  const endSession = useCallback(async ({ force = false } = {}) => {
     if (endingRef.current) return;
     endingRef.current = true;
     leavingRef.current = true;
     const conferenceId = sessionRef.current?.conferenceId;
-    mediaApiRef.current.endJitsi();
     try {
+      await mediaApiRef.current.flushRecording?.();
+      mediaApiRef.current.endJitsi();
       mediaApiRef.current.leaveVideo();
       await recordLeave(conferenceId);
       if (conferenceId) {
-        await api.post(`/conferences/${conferenceId}/end`);
+        await api.post(`/conferences/${conferenceId}/end`, force ? { force: true } : {});
       }
       toast.success('Meeting ended — documents are being generated');
     } catch (err) {
       endingRef.current = false;
       leavingRef.current = false;
+      if (err.response?.status === 409 && err.response?.data?.code === 'PARTICIPANTS_STILL_IN') {
+        throw err;
+      }
       toast.error(err.response?.data?.message || 'Failed to end meeting');
       return;
     }

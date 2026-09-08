@@ -1,3 +1,4 @@
+const PRODUCTION_APP_ORIGIN = 'https://team.asterixmc.com';
 const PRIVATE_LAN_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i;
 
 const stripSlash = (url) => String(url || '').trim().replace(/\/$/, '');
@@ -8,11 +9,13 @@ const configuredOrigins = () => {
     process.env.CLIENT_URL,
     process.env.PUBLIC_URL,
     ...(String(process.env.CORS_ORIGINS || '').split(',')),
+    PRODUCTION_APP_ORIGIN,
     lanIp ? `http://${lanIp}:5173` : '',
     lanIp ? `https://${lanIp}:5173` : '',
-    'http://localhost:5173',
-    'https://localhost:5173',
   ];
+  if (process.env.NODE_ENV !== 'production') {
+    listed.push('http://localhost:5173', 'https://localhost:5173');
+  }
   return listed.map(stripSlash).filter(Boolean);
 };
 

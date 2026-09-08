@@ -7,7 +7,8 @@ import {
   VisibilityOutlined, PeopleOutlined, VideoCallOutlined, PersonOutlined,
 } from '@mui/icons-material';
 import api from '../services/api';
-import { formatCalendarDate, formatClockTime, formatDateTime } from '../utils/dateTime';
+import { formatCalendarDate } from '../utils/dateTime';
+import useSystemDateTime from '../hooks/useSystemDateTime';
 import { dialogPaperSx, PremiumDialogHeader } from './PremiumFormFields';
 
 const formatRole = (role, isGuest) => {
@@ -16,7 +17,7 @@ const formatRole = (role, isGuest) => {
   return label;
 };
 
-const ParticipantList = ({ items, emptyLabel, showJoinTimes = false }) => {
+const ParticipantList = ({ items, emptyLabel, showJoinTimes = false, formatDateTime }) => {
   if (!items?.length) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ py: 1.5, textAlign: 'center' }}>
@@ -95,12 +96,13 @@ const TimeCard = ({ label, value }) => (
       {label}
     </Typography>
     <Typography variant="h6" sx={{ fontWeight: 800, mt: 0.25 }}>
-      {value ? formatClockTime(value) : '—'}
+      {value || '—'}
     </Typography>
   </Box>
 );
 
 const ConferenceHistoryViewDialog = ({ open, conferenceId, onClose }) => {
+  const { formatDateTime, formatTime, formatStoredClock } = useSystemDateTime();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
 
@@ -148,8 +150,18 @@ const ConferenceHistoryViewDialog = ({ open, conferenceId, onClose }) => {
         {!loading && data && (
           <Stack spacing={2.5}>
             <Stack direction="row" spacing={1.5}>
-              <TimeCard label="Start time" value={data.started_time} />
-              <TimeCard label="End time" value={data.ended_time} />
+              <TimeCard
+                label="Start time"
+                value={data.accepted_at
+                  ? formatTime(data.accepted_at)
+                  : formatStoredClock(data.started_time, data.scheduled_date)}
+              />
+              <TimeCard
+                label="End time"
+                value={data.ended_at
+                  ? formatTime(data.ended_at)
+                  : formatStoredClock(data.ended_time, data.scheduled_date)}
+              />
             </Stack>
 
             <Box>
@@ -169,6 +181,7 @@ const ConferenceHistoryViewDialog = ({ open, conferenceId, onClose }) => {
                 items={data.joined}
                 emptyLabel="No one joined this meeting."
                 showJoinTimes
+                formatDateTime={formatDateTime}
               />
             </Box>
           </Stack>

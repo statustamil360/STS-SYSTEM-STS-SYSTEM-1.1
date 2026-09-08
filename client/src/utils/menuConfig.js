@@ -2,8 +2,8 @@ import { ROLES } from './constants';
 
 // Sub-sections of the Conferences page, selected through the ?tab= query param.
 const CONFERENCE_SUBMENU = [
-  { title: 'Upcomings', path: '/conferences?tab=upcoming', icon: 'Event' },
-  { title: 'Historys', path: '/conferences?tab=history', icon: 'History' },
+  { title: 'Upcoming', path: '/conferences?tab=upcoming', icon: 'Event' },
+  { title: 'History', path: '/conferences?tab=history', icon: 'History' },
   { title: 'Documents', path: '/conferences?tab=documents', icon: 'Description' },
   { title: 'Reports', path: '/conferences?tab=reports', icon: 'Assessment' },
 ];
@@ -25,6 +25,7 @@ const ADMIN_SETTINGS_SUBMENU = [
 ];
 
 const SUPER_ADMIN_SETTINGS_SUBMENU = [
+  { title: 'Preferences', path: '/preferences', icon: 'Tune' },
   { title: 'System Settings', path: '/settings', icon: 'Settings' },
   { title: 'Profile', path: '/profile', icon: 'Person' },
 ];
@@ -39,7 +40,7 @@ export const MENU_CONFIG = {
     { title: 'Performance', path: '/performance', icon: 'Speed' },
     { title: 'Audit Logs', path: '/audit-logs', icon: 'Security' },
     { section: 'Analytics' },
-    { title: 'Reports', path: '/reports', icon: 'Assessment' },
+    { title: 'Videos', path: '/videos', icon: 'Videocam' },
     { section: 'System' },
     { title: 'Settings', icon: 'Settings', children: SUPER_ADMIN_SETTINGS_SUBMENU },
     { title: 'Notifications', path: '/notifications', icon: 'Notifications' },
@@ -57,8 +58,7 @@ export const MENU_CONFIG = {
     { title: 'Appointments', path: '/appointments', icon: 'Event' },
     { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'Analytics' },
-    { title: 'Reports', path: '/reports', icon: 'Assessment' },
-    { title: 'Audit Logs', path: '/audit-logs', icon: 'History' },
+    { title: 'Videos', path: '/videos', icon: 'Videocam' },
     { title: 'Time Calculator', path: '/join-time-report', icon: 'AccessTime' },
     { section: 'System' },
     { title: 'Settings', icon: 'Settings', children: ADMIN_SETTINGS_SUBMENU },
@@ -85,7 +85,6 @@ export const MENU_CONFIG = {
     { title: 'Dashboard', path: '/dashboard', icon: 'Dashboard' },
     { section: 'Clinical' },
     { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
-    { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Medical Notes', path: '/medical-notes', icon: 'NoteAlt' },
     { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'System' },
@@ -97,7 +96,6 @@ export const MENU_CONFIG = {
     { title: 'Dashboard', path: '/dashboard', icon: 'Dashboard' },
     { section: 'Clinical' },
     { title: 'Conferences', icon: 'VideoCall', children: CONFERENCE_SUBMENU },
-    { title: 'Assigned Patients', path: '/patients', icon: 'LocalHospital' },
     { title: 'Patient Reports', path: '/patient-reports', icon: 'Description' },
     { title: 'Tasks', icon: 'TaskAlt', children: TASK_SUBMENU },
     { section: 'System' },

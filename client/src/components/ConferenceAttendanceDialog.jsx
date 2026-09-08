@@ -9,11 +9,13 @@ import {
   AccessTimeOutlined, ExpandMoreOutlined, ExpandLessOutlined,
 } from '@mui/icons-material';
 import api from '../services/api';
-import { formatDateTime, formatDuration, formatClockTime, formatCalendarDate } from '../utils/dateTime';
+import { formatDuration, formatCalendarDate } from '../utils/dateTime';
+import useSystemDateTime from '../hooks/useSystemDateTime';
 
 const formatRole = (role) => role?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || 'Other';
 
 const ConferenceAttendanceDialog = ({ open, conferenceId, onClose }) => {
+  const { formatDateTime, formatTime, formatStoredClock } = useSystemDateTime();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [expandedUser, setExpandedUser] = useState(null);
@@ -60,7 +62,9 @@ const ConferenceAttendanceDialog = ({ open, conferenceId, onClose }) => {
                 {' · '}
                 {formatCalendarDate(data.scheduled_date)}
                 {' '}
-                {formatClockTime(data.scheduled_time)}
+                {data.accepted_at
+                  ? formatTime(data.accepted_at)
+                  : formatStoredClock(data.started_time || data.scheduled_time, data.scheduled_date)}
               </Typography>
             )}
           </Box>
@@ -93,13 +97,13 @@ const ConferenceAttendanceDialog = ({ open, conferenceId, onClose }) => {
               }}
             >
               <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                Total recorded join time (all participants)
+                Total meeting time (start to end)
               </Typography>
               <Typography variant="h6" fontWeight={800} color="primary.main">
                 {formatDuration(data.meeting_total_seconds)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Used for salary calculation — includes every join/rejoin session until leave or meeting end.
+                Meeting start to meeting end. Each participant's time is their presence inside this window.
               </Typography>
             </Box>
 

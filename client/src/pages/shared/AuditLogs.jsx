@@ -1,17 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import {
-  DownloadOutlined, FilterListOutlined, SecurityOutlined,
-} from '@mui/icons-material';
-import {
-  Grid, TextField, MenuItem, Stack, Chip, Button,
-  CircularProgress, InputAdornment,
-} from '@mui/material';
+import { DownloadOutlined } from '@mui/icons-material';
+import { Chip, Button, CircularProgress } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { toast } from 'react-toastify';
 import DataTable from '../../components/DataTable';
-import {
-  PremiumPageCard, PremiumSection, adminFieldSx, premiumButtonSx,
-} from '../../components/PremiumPageLayout';
+import { premiumButtonSx } from '../../components/PremiumPageLayout';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { refreshNotificationBadge } from '../../utils/notificationRefresh';
@@ -116,97 +109,50 @@ const AuditLogs = () => {
     { field: 'created_at', headerName: 'Timestamp', render: (r) => formatDateTime(r.created_at) },
   ];
 
-  const exportButton = (
-    <Button
-      variant="contained"
-      size="small"
-      onClick={handleExport}
-      disabled={exporting}
-      startIcon={exporting ? <CircularProgress size={14} color="inherit" /> : <DownloadOutlined />}
-      sx={{ ...premiumButtonSx, py: 0.875, fontSize: '0.8125rem' }}
-    >
-      {exporting ? 'Exporting...' : 'Export CSV'}
-    </Button>
-  );
+  const auditFilters = [
+    {
+      key: 'action',
+      label: 'Action',
+      value: filters.action,
+      onChange: (v) => { setFilters((prev) => ({ ...prev, action: v })); setPage(0); },
+      options: ACTION_OPTIONS,
+    },
+    {
+      key: 'entity_type',
+      label: 'Entity Type',
+      value: filters.entity_type,
+      onChange: (v) => { setFilters((prev) => ({ ...prev, entity_type: v })); setPage(0); },
+      options: ENTITY_OPTIONS,
+    },
+  ];
 
   return (
-    <Stack spacing={2.5}>
-      <PremiumPageCard
-        icon={SecurityOutlined}
-        title="Audit Logs"
-        subtitle="Complete activity trail of user actions, system events, and security changes"
-        action={exportButton}
-      >
-        <PremiumSection
-          icon={FilterListOutlined}
-          title="Filter Activity"
-          subtitle="Narrow results by action type or entity"
+    <DataTable
+      title="Audit Logs"
+      columns={columns}
+      rows={rows}
+      loading={loading}
+      loadingMore={loadingMore}
+      total={total}
+      page={page}
+      rowsPerPage={rowsPerPage}
+      onPageChange={setPage}
+      onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
+      filters={auditFilters}
+      actions={false}
+      headerActions={(
+        <Button
+          variant="contained"
+          size="small"
+          onClick={handleExport}
+          disabled={exporting}
+          startIcon={exporting ? <CircularProgress size={14} color="inherit" /> : <DownloadOutlined />}
+          sx={{ ...premiumButtonSx, py: 0.875, fontSize: '0.8125rem' }}
         >
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                fullWidth
-                size="small"
-                select
-                label="Action"
-                value={filters.action}
-                onChange={(e) => { setFilters({ ...filters, action: e.target.value }); setPage(0); }}
-                sx={adminFieldSx}
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start" sx={{ ml: 0.5 }}>
-                        <FilterListOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-              >
-                {ACTION_OPTIONS.map((o) => <MenuItem key={o.value || 'all'} value={o.value}>{o.label}</MenuItem>)}
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                fullWidth
-                size="small"
-                select
-                label="Entity Type"
-                value={filters.entity_type}
-                onChange={(e) => { setFilters({ ...filters, entity_type: e.target.value }); setPage(0); }}
-                sx={adminFieldSx}
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start" sx={{ ml: 0.5 }}>
-                        <SecurityOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-              >
-                {ENTITY_OPTIONS.map((o) => <MenuItem key={o.value || 'all'} value={o.value}>{o.label}</MenuItem>)}
-              </TextField>
-            </Grid>
-          </Grid>
-        </PremiumSection>
-      </PremiumPageCard>
-
-      <DataTable
-        title="Activity Log"
-        columns={columns}
-        rows={rows}
-        loading={loading}
-        loadingMore={loadingMore}
-        total={total}
-        page={page}
-        rowsPerPage={rowsPerPage}
-        onPageChange={setPage}
-        onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
-        actions={false}
-      />
-    </Stack>
+          {exporting ? 'Exporting...' : 'Export CSV'}
+        </Button>
+      )}
+    />
   );
 };
 

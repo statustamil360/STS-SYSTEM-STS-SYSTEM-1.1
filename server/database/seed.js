@@ -121,7 +121,7 @@ async function seed() {
   if (!existingAdmin.length) {
     await connection.query(
       'INSERT INTO admins (user_id, admin_code, created_by) VALUES (?, ?, ?)',
-      [adminUserId, 'ADM-DEMO001', superAdminId || null]
+      [adminUserId, 'ADM-01', superAdminId || null]
     );
   }
 

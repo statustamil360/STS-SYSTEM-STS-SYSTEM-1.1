@@ -1,6 +1,7 @@
 import { Component } from 'react';
 import { Box, Typography, Button, Paper } from '@mui/material';
 import { RefreshOutlined, HomeOutlined } from '@mui/icons-material';
+import { useLocation } from 'react-router-dom';
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -17,11 +18,11 @@ class ErrorBoundary extends Component {
   }
 
   handleReload = () => {
-    window.location.reload();
+    window.location.assign(`${window.location.pathname}${window.location.search || ''}`);
   };
 
   handleGoHome = () => {
-    window.location.href = '/dashboard';
+    window.location.assign('/dashboard');
   };
 
   render() {
@@ -87,5 +88,10 @@ class ErrorBoundary extends Component {
     );
   }
 }
+
+export const RouteErrorBoundary = ({ children }) => {
+  const location = useLocation();
+  return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
+};
 
 export default ErrorBoundary;

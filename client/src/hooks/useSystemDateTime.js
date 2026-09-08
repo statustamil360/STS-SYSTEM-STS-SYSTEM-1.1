@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import { DEFAULT_TIMEZONE } from '../utils/timezones';
 import {
-  formatDate, formatDateTime, formatTime, formatClock, formatDateKey,
+  formatDate, formatDateTime, formatTime, formatClock, formatDateKey, formatStoredClock,
 } from '../utils/dateTime';
 
 const useSystemDateTime = () => {
@@ -15,6 +15,7 @@ const useSystemDateTime = () => {
     formatTime: (value, options) => formatTime(value, timezone, options),
     formatClock: (date, options) => formatClock(date, timezone, options),
     formatDateKey: (value) => formatDateKey(value, timezone),
+    formatStoredClock: (timeValue, dateValue, options) => formatStoredClock(timeValue, dateValue, timezone, options),
   }), [timezone]);
 };
 

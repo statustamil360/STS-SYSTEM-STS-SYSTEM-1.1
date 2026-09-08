@@ -72,19 +72,6 @@ export const staffEditSchema = yup.object({
   emergency_contact: yup.string().nullable().transform((v) => (v === '' ? null : v?.trim())),
 });
 
-export const adminCreateSchema = staffCreateSchema;
-export const adminEditSchema = staffEditSchema.shape({
-  newPassword: yup.string().transform((v) => v || undefined).optional()
-    .min(8, 'Password must be at least 8 characters'),
-  confirmNewPassword: yup.string().when('newPassword', {
-    is: (val) => Boolean(val),
-    then: (schema) => schema
-      .oneOf([yup.ref('newPassword')], 'Passwords must match')
-      .required('Confirm the new password'),
-    otherwise: (schema) => schema.optional(),
-  }),
-});
-
 export const adminUpsertSchema = yup.object({
   name: yup.string().trim().required('Full name is required'),
   email: yup.string().email('Enter a valid email').required('Email is required'),

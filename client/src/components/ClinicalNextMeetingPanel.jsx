@@ -8,11 +8,13 @@ import useCountdown from '../hooks/useCountdown';
 import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
 import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { formatClockTime } from '../utils/dateTime';
-import { ROLES } from '../utils/constants';
+import { ROLES, canJoinVideoRoom, isMeetingHostRole } from '../utils/constants';
 import api from '../services/api';
+import { useOptionalConferenceSession } from '../context/ConferenceSessionContext';
 
 const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const navigate = useNavigate();
+  const sessionCtx = useOptionalConferenceSession();
   const countdown = useCountdown(meeting?.scheduled_date, meeting?.scheduled_time);
   const openLeadMinutes = useConferenceOpenLeadMinutes();
   const { can } = useReceptionistPermissions();
@@ -44,7 +46,7 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const isAhp = userRole === ROLES.AHP;
   const isGuest = userRole === ROLES.CONFERENCE_GUEST;
   // Admins supervise reception, so they get the same open/end control.
-  const isMeetingHost = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(userRole);
+  const isMeetingHost = isMeetingHostRole(userRole);
   const isParticipant = isGp || isAhp || isGuest;
   const isAccepted = ['waiting', 'live'].includes(meeting.status);
   const isCompleted = ['completed', 'cancelled'].includes(meeting.status);
@@ -53,7 +55,7 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const canAccept = isPendingOpen && withinAcceptWindow;
   const acceptTooEarly = isPendingOpen && !withinAcceptWindow;
   const canEnd = isMeetingHost && isAccepted && !isCompleted && can('conference_end');
-  const canJoin = isParticipant && isAccepted && !isCompleted;
+  const canJoin = canJoinVideoRoom(userRole) && isAccepted && !isCompleted;
   const waitingForReception = isParticipant && meeting.status === 'scheduled';
 
   const goToRoom = (data) => {
@@ -71,9 +73,12 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const handleAccept = async () => {
     setAccepting(true);
     try {
-      await api.post(`/conferences/${meeting.id}/accept`);
-      toast.success('Meeting opened — participants can now join');
+      const { data } = await api.post(`/conferences/${meeting.id}/accept`);
+      const shouldRecord = Boolean(data.data?.record_meeting || meeting.record_meeting);
       onRefresh?.();
+      toast.success(shouldRecord
+        ? 'Meeting opened — recording starts when participants join'
+        : 'Meeting opened — participants can now join');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to open meeting');
     } finally {
@@ -84,6 +89,13 @@ const ClinicalNextMeetingPanel = ({ meeting, userRole, onRefresh }) => {
   const endMeeting = async (force = false) => {
     setEnding(true);
     try {
+      const isActiveSession = sessionCtx?.session
+        && String(sessionCtx.session.conferenceId) === String(meeting.id);
+      if (isActiveSession) {
+        await sessionCtx.endSession({ force });
+        onRefresh?.();
+        return;
+      }
       await api.post(`/conferences/${meeting.id}/end`, force ? { force: true } : {});
       toast.success('Meeting ended — documents are being generated');
       onRefresh?.();

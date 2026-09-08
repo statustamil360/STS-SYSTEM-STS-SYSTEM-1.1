@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 const { hashPassword } = require('../utils/password');
-const { generateCode } = require('../utils/generateCode');
+const { generateSequentialCode } = require('../utils/generateCode');
 const { usernameFromEmail, ensureUniqueUsername, emailExists } = require('../utils/userHelpers');
 
 const getRoleId = async (roleName) => {
@@ -8,12 +8,14 @@ const getRoleId = async (roleName) => {
   return rows[0]?.id;
 };
 
+const isDateParam = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+
 exports.getAll = async (req, res, next) => {
   try {
-    const { search, status, page = 1, limit = 10 } = req.query;
+    const { search, status, created_from, created_to, last_login, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let query = `
-      SELECT a.id, a.admin_code, u.email, u.username, u.status,
+      SELECT a.id, a.admin_code, u.email, u.username, u.status, u.last_login,
              p.first_name, p.last_name, p.phone, a.created_at
       FROM admins a
       JOIN users u ON a.user_id = u.id
@@ -22,12 +24,27 @@ exports.getAll = async (req, res, next) => {
     const params = [];
 
     if (search) {
-      query += ' AND (p.first_name LIKE ? OR p.last_name LIKE ? OR u.email LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      const term = `%${search}%`;
+      query += ` AND (p.first_name LIKE ? OR p.last_name LIKE ? OR u.email LIKE ?
+        OR u.username LIKE ? OR a.admin_code LIKE ? OR p.phone LIKE ?)`;
+      params.push(term, term, term, term, term, term);
     }
-    if (status) {
+    if (['active', 'inactive', 'disabled'].includes(status)) {
       query += ' AND u.status = ?';
       params.push(status);
+    }
+    if (isDateParam(created_from)) {
+      query += ' AND DATE(a.created_at) >= ?';
+      params.push(created_from);
+    }
+    if (isDateParam(created_to)) {
+      query += ' AND DATE(a.created_at) <= ?';
+      params.push(created_to);
+    }
+    if (last_login === 'never') {
+      query += ' AND u.last_login IS NULL';
+    } else if (last_login === 'logged_in') {
+      query += ' AND u.last_login IS NOT NULL';
     }
 
     const [countResult] = await pool.execute(
@@ -82,7 +99,7 @@ exports.create = async (req, res, next) => {
 
     const roleId = await getRoleId('admin');
     const passwordHash = await hashPassword(password);
-    const adminCode = generateCode('ADM');
+    const adminCode = await generateSequentialCode(conn, 'ADM', 'admins', 'admin_code');
     const resolvedUsername = username || await ensureUniqueUsername(conn, usernameFromEmail(email));
 
     const [userResult] = await conn.execute(

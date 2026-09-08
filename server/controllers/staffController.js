@@ -9,6 +9,7 @@ const {
   serializePermissions,
   clearReceptionistPermissionCache,
 } = require('../services/receptionistPermissionService');
+const { createNotification } = require('../services/notificationService');
 
 const getRoleId = async (roleName) => {
   const [rows] = await pool.execute('SELECT id FROM roles WHERE name = ?', [roleName]);
@@ -172,15 +173,12 @@ exports.update = async (req, res, next) => {
       await setUserStatus(pool, userId, status);
       if (status !== 'active') {
         sessionRevoked = true;
-        await pool.execute(
-          'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-          [
-            userId,
-            'Account Deactivated',
-            `Your account was set to ${status} by an administrator. You have been signed out.`,
-            'security',
-          ]
-        );
+        await createNotification({
+          userId,
+          title: 'Account Deactivated',
+          message: `Your account was set to ${status} by an administrator. You have been signed out.`,
+          type: 'security',
+        });
       }
     }
 

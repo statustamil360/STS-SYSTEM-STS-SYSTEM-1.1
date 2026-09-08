@@ -10,6 +10,15 @@ import { ROLES } from '../utils/constants';
 
 const isGpRole = (role) => ['gp', 'guest_gp'].includes(role);
 
+const ROLE_CHIP = {
+  gp: { label: 'GP', color: '#0F766E', bg: '#CCFBF1' },
+  ahp: { label: 'AHP', color: '#5B21B6', bg: '#EDE9FE' },
+  guest_gp: { label: 'Guest GP', color: '#1D4ED8', bg: '#DBEAFE' },
+  guest_ahp: { label: 'Guest AHP', color: '#C2410C', bg: '#FFEDD5' },
+};
+
+const roleMeta = (role) => ROLE_CHIP[role] || { label: 'Guest', color: '#92400E', bg: '#FEF3C7' };
+
 const typingKey = (reportUserId, section) => `${reportUserId}:${section}`;
 
 const TypingDots = () => (
@@ -186,27 +195,45 @@ const ConferenceReportPanel = ({ conferenceId, user, isAssignedGp, onRequestEdit
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+      <Box sx={{ px: 2.25, py: 1.75, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: '-0.01em', mb: 1.1 }}>
           Live Clinical Report
         </Typography>
         <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75 }}>
           {reports.map((r) => {
             const typing = chipIsTyping(r.user_id);
+            const selected = activeUserId === r.user_id;
+            const role = roleMeta(r.participant_role);
             return (
               <Chip
                 key={r.user_id}
                 label={(
-                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
                     {r.display_name}
+                    <Box
+                      component="span"
+                      sx={{
+                        px: 0.75,
+                        py: '1px',
+                        borderRadius: '999px',
+                        fontSize: 10,
+                        fontWeight: 800,
+                        letterSpacing: '0.04em',
+                        lineHeight: 1.4,
+                        bgcolor: selected ? 'rgba(255,255,255,0.22)' : role.bg,
+                        color: selected ? '#fff' : role.color,
+                      }}
+                    >
+                      {role.label}
+                    </Box>
                     {typing && <TypingDots />}
                   </Box>
                 )}
                 size="small"
-                color={activeUserId === r.user_id ? 'primary' : 'default'}
-                variant={activeUserId === r.user_id ? 'filled' : 'outlined'}
+                color={selected ? 'primary' : 'default'}
+                variant={selected ? 'filled' : 'outlined'}
                 onClick={() => setActiveUserId(r.user_id)}
-                sx={{ fontWeight: 600, cursor: 'pointer' }}
+                sx={{ fontWeight: 600, cursor: 'pointer', height: 30 }}
               />
             );
           })}

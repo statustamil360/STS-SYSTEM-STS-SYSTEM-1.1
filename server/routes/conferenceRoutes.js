@@ -3,6 +3,7 @@ const { body } = require('express-validator');
 const conferenceController = require('../controllers/conferenceController');
 const conferenceReportController = require('../controllers/conferenceReportController');
 const conferenceGuestController = require('../controllers/conferenceGuestController');
+const recordingController = require('../controllers/recordingController');
 const { authenticate, authorize } = require('../middleware/auth');
 const {
   canReceptionistEdit, canReceptionistDelete, requireReceptionistAction,
@@ -48,16 +49,20 @@ router.post('/:id/guests', authorize('receptionist'), [
 router.delete('/:id/guests/:guestId', authorize('receptionist'), conferenceGuestController.revokeGuest);
 
 router.get('/:id/documents/:fileId/view', authorize(...clinicalRoles), canViewDocuments, conferenceController.viewGeneratedDocument);
+router.get('/:id/files/:fileId/view', authorize(...clinicalRoles), conferenceController.viewDocument);
+router.get('/:id/clinical-context', authorize(...clinicalRoles), conferenceController.getClinicalContext);
 router.get('/:id', authorize(...clinicalRoles), conferenceController.getById);
 router.post('/', authorize('receptionist'), [
   body('patient_id').isInt(), body('scheduled_date').notEmpty(), body('scheduled_time').notEmpty(),
 ], validate, conferenceController.create);
-router.post('/:id/accept', authorize('receptionist', 'admin'), requireReceptionistAction('conference_open', 'You do not have permission to open meetings'), conferenceController.accept);
+router.post('/:id/accept', authorize('receptionist', 'admin', 'super_admin'), requireReceptionistAction('conference_open', 'You do not have permission to open meetings'), conferenceController.accept);
 router.post('/:id/join', authorize('gp', 'ahp', 'conference_guest'), conferenceController.join);
-router.post('/:id/leave', authorize('gp', 'ahp', 'conference_guest'), conferenceController.leave);
+router.post('/:id/leave', authorize('gp', 'ahp', 'conference_guest', 'receptionist', 'admin', 'super_admin'), conferenceController.leave);
+router.post('/:id/recording-chunks', authorize('gp', 'ahp', 'conference_guest', 'receptionist', 'admin', 'super_admin'), recordingController.uploadChunk);
 router.get('/:id/participants', authorize(...clinicalRoles), conferenceController.getParticipants);
 router.get('/:id/attendance', authorize('receptionist', 'admin', 'super_admin'), conferenceController.getAttendance);
-router.post('/:id/end', authorize('receptionist', 'admin'), requireReceptionistAction('conference_end', 'You do not have permission to end meetings'), conferenceController.end);
+router.post('/:id/end', authorize('receptionist', 'admin', 'super_admin'), requireReceptionistAction('conference_end', 'You do not have permission to end meetings'), conferenceController.end);
+router.post('/:id/continue-empty', authorize('receptionist', 'admin', 'super_admin'), requireReceptionistAction('conference_end', 'You do not have permission to manage this meeting'), conferenceController.continueEmpty);
 router.put('/:id', authorize('receptionist', 'gp', 'ahp'), canReceptionistEdit, conferenceController.update);
 router.delete('/:id', authorize('receptionist'), canReceptionistDelete, conferenceController.remove);
 

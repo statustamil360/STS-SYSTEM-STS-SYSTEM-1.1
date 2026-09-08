@@ -7,6 +7,7 @@ import { alpha } from '@mui/material/styles';
 import {
   TuneOutlined, EmailOutlined, SaveOutlined, LanguageOutlined,
   ScheduleOutlined, PaletteOutlined, AccessTimeOutlined, SmsOutlined, WhatsApp,
+  NotificationsOutlined,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
@@ -97,6 +98,12 @@ const Settings = () => {
     timezone: DEFAULT_TIMEZONE,
     language: 'en',
     theme: 'light',
+    notification_email: '',
+    notify_appointment_assigned: true,
+    notify_appointment_cancelled: true,
+    notify_appointment_weekly: true,
+    notify_appointment_monthly: true,
+    notify_conference_history_monthly: true,
   });
   const [emailSettings, setEmailSettings] = useState(DEFAULT_EMAIL);
   const [smsSettings, setSmsSettings] = useState(DEFAULT_SMS);
@@ -139,6 +146,12 @@ const Settings = () => {
         timezone: settings.timezone,
         language: settings.language,
         theme: settings.theme,
+        notification_email: String(settings.notification_email || '').trim(),
+        notify_appointment_assigned: String(Boolean(settings.notify_appointment_assigned)),
+        notify_appointment_cancelled: String(Boolean(settings.notify_appointment_cancelled)),
+        notify_appointment_weekly: String(Boolean(settings.notify_appointment_weekly)),
+        notify_appointment_monthly: String(Boolean(settings.notify_appointment_monthly)),
+        notify_conference_history_monthly: String(Boolean(settings.notify_conference_history_monthly)),
       });
       dispatch(updateSystemSettings({
         hospital_name: settings.hospital_name,
@@ -193,11 +206,12 @@ const Settings = () => {
       <PremiumPageCard
         icon={TuneOutlined}
         title="System Settings"
-        subtitle="Configure global hospital preferences, localization, and appearance"
+        subtitle="Hospital timezone, appearance, and admin notification emails"
       >
         {fetching ? (
           <PageLoader message="Loading settings..." />
         ) : (
+          <Stack spacing={2.5}>
           <PremiumSection
             icon={TuneOutlined}
             title="General Configuration"
@@ -291,9 +305,9 @@ const Settings = () => {
                       {preview.dateLabel} · {getTimezoneLabel(settings.timezone || DEFAULT_TIMEZONE)}
                     </Typography>
                   </Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 280 }}>
-                    Save settings to apply this timezone across the entire system — header clock, timestamps, and reports.
-                  </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 280 }}>
+                      Save settings to apply this timezone across clocks, timestamps, reports, and notification emails.
+                    </Typography>
                 </Box>
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
@@ -321,7 +335,77 @@ const Settings = () => {
                 </TextField>
               </Grid>
             </Grid>
-            <Stack direction="row" sx={{ justifyContent: 'flex-end', mt: 3 }}>
+          </PremiumSection>
+            <PremiumSection
+              icon={NotificationsOutlined}
+              title="Admin notification email"
+              subtitle="Immediate appointment alerts and week-end / month-end PDF reports use the system timezone"
+            >
+              <Grid container spacing={2.5}>
+                <Grid size={{ xs: 12, md: 8 }}>
+                  <TextField
+                    label="Notification email"
+                    type="email"
+                    value={settings.notification_email || ''}
+                    onChange={(e) => setSettings({ ...settings, notification_email: e.target.value })}
+                    placeholder={getFieldPlaceholder('email')}
+                    helperText="New appointments, cancellations, and scheduled PDFs are sent here. Super Admin must enable SMTP first."
+                    {...fieldProps(<EmailOutlined sx={{ fontSize: 20, color: 'primary.main', opacity: 0.85 }} />)}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, display: 'block', mb: 1 }}>
+                    Send immediately
+                  </Typography>
+                  <Stack spacing={0.5}>
+                    {[
+                      { key: 'notify_appointment_assigned', label: 'New appointment details when an appointment is assigned' },
+                      { key: 'notify_appointment_cancelled', label: 'Cancelled appointment details and the cancel reason' },
+                    ].map((item) => (
+                      <FormControlLabel
+                        key={item.key}
+                        control={
+                          <Switch
+                            checked={Boolean(settings[item.key])}
+                            onChange={(e) => setSettings({ ...settings, [item.key]: e.target.checked })}
+                            color="success"
+                          />
+                        }
+                        label={item.label}
+                      />
+                    ))}
+                  </Stack>
+                </Grid>
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, display: 'block', mb: 1 }}>
+                    Send PDF reports
+                  </Typography>
+                  <Stack spacing={0.5}>
+                    {[
+                      { key: 'notify_appointment_weekly', label: "This week's appointment details (Sunday 6:00 PM)" },
+                      { key: 'notify_appointment_monthly', label: "This month's appointment details (last day of month, 6:00 PM)" },
+                      { key: 'notify_conference_history_monthly', label: 'Conference History details (same monthly email)' },
+                    ].map((item) => (
+                      <FormControlLabel
+                        key={item.key}
+                        control={
+                          <Switch
+                            checked={Boolean(settings[item.key])}
+                            onChange={(e) => setSettings({ ...settings, [item.key]: e.target.checked })}
+                            color="success"
+                          />
+                        }
+                        label={item.label}
+                      />
+                    ))}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                    Report times follow the saved system timezone. Monthly appointment and conference history PDFs go out together.
+                  </Typography>
+                </Grid>
+              </Grid>
+            </PremiumSection>
+            <Stack direction="row" sx={{ justifyContent: 'flex-end' }}>
               <Button
                 variant="contained"
                 onClick={handleSave}
@@ -332,7 +416,7 @@ const Settings = () => {
                 {loading ? 'Saving...' : 'Save Settings'}
               </Button>
             </Stack>
-          </PremiumSection>
+          </Stack>
         )}
       </PremiumPageCard>
       )}

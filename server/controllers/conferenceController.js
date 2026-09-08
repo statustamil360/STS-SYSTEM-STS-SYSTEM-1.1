@@ -7,10 +7,18 @@ const { processTimedOutConferences } = require('../services/conferenceTimeoutSer
 const { buildExport } = require('../services/exportService');
 const { createAuditLog } = require('../middleware/auditLog');
 const { assertClinicalDocumentDownload } = require('../middleware/receptionistPermission');
-const { getNumericSetting } = require('../services/settingsService');
+const { getNumericSetting, getStringSetting } = require('../services/settingsService');
 const { ensureReportRows, lockReportsAfterMeeting } = require('../services/clinicalReportService');
 const { generateParticipantDocuments, formatDocumentCode } = require('../services/clinicalDocumentService');
-const { emitConferenceEnded } = require('../services/socketService');
+const { emitConferenceEnded, emitScheduleChanged, emitRecordingFlush } = require('../services/socketService');
+const {
+  startRecording, finalizeRecording, waitForRecordingData, ensureSchema: ensureRecordingSchema, parseBool,
+} = require('../services/conferenceRecordingService');
+const { createNotification, notifyConferenceParticipants } = require('../services/notificationService');
+const {
+  scheduleEmptyCheck, markOccupied, cancelEmptyWatch, continueEmptyMeeting,
+} = require('../services/emptyMeetingWatcher');
+const { formatStoredTime } = require('../utils/dateTimeDisplay');
 const {
   startSession, endSession, countOpenSessions, endAllSessions,
   getConferenceAttendance, getConferenceParticipantOverview, getJoinTimeReport,
@@ -30,7 +38,7 @@ const isAcceptWindowOpen = (conference, leadMinutes, now = Date.now()) => {
 };
 
 /** Reception runs meetings day to day; admins keep the same control as their supervisor. */
-const MEETING_HOST_ROLES = ['receptionist', 'admin'];
+const MEETING_HOST_ROLES = ['receptionist', 'admin', 'super_admin'];
 
 const describeAcceptWindow = (leadMinutes) => (leadMinutes > 0
   ? `This meeting can be opened from ${leadMinutes} minute${leadMinutes === 1 ? '' : 's'} before the assigned time`
@@ -62,6 +70,9 @@ const conferenceSelectBase = `
          TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS scheduled_time,
          c.status, c.cancelled_reason, c.cancelled_at, c.meeting_link, c.room_id, c.notes, c.accepted_at, c.accepted_by,
          c.ended_at, c.created_by, c.created_at, c.updated_at,
+         c.record_meeting,
+         (SELECT r.status FROM conference_recordings r WHERE r.conference_id = c.id ORDER BY r.id DESC LIMIT 1) AS recording_status,
+         (SELECT r.id FROM conference_recordings r WHERE r.conference_id = c.id ORDER BY r.id DESC LIMIT 1) AS recording_id,
          TIME_FORMAT(c.accepted_at, '%H:%i:%s') AS started_time,
          TIME_FORMAT(c.ended_at, '%H:%i:%s') AS ended_time,
          CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
@@ -127,7 +138,10 @@ const applyRoleFilter = async (req, query, params) => {
   return query;
 };
 
+const wantsRecording = (conference) => parseBool(conference?.record_meeting);
+
 const getConferenceById = async (id) => {
+  await ensureRecordingSchema();
   const [rows] = await pool.execute(`${conferenceSelectBase} WHERE c.id = ?`, [id]);
   return videoService.withMeetingLink(rows[0] || null);
 };
@@ -203,8 +217,9 @@ const backfillMissingDocuments = async (req) => {
 
 exports.getAll = async (req, res, next) => {
   try {
+    await ensureRecordingSchema();
     await processTimedOutConferences();
-    const { search, status, date, page = 1, limit = 10 } = req.query;
+    const { search, status, date, date_scope, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     let where = 'WHERE 1=1';
     const params = [];
@@ -215,7 +230,7 @@ exports.getAll = async (req, res, next) => {
     if (req.query.scope === 'history') {
       where += " AND c.status IN ('completed', 'cancelled')";
     }
-    if (date) { where += ' AND c.scheduled_date = ?'; params.push(date); }
+    where = applyScheduledDateFilter(where, params, { date, date_scope });
     if (search) {
       where += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
         OR CONCAT(gp_p.first_name, ' ', gp_p.last_name) LIKE ? OR CONCAT(ahp_p.first_name, ' ', ahp_p.last_name) LIKE ?
@@ -255,6 +270,17 @@ const SCHEDULE_RANGES = {
   month: 'YEAR(c.scheduled_date) = YEAR(CURDATE()) AND MONTH(c.scheduled_date) = MONTH(CURDATE())',
 };
 
+const applyScheduledDateFilter = (where, params, { date, date_scope }) => {
+  if (SCHEDULE_RANGES[date_scope]) {
+    return `${where} AND (${SCHEDULE_RANGES[date_scope]})`;
+  }
+  if (date) {
+    params.push(date);
+    return `${where} AND c.scheduled_date = ?`;
+  }
+  return where;
+};
+
 const ACTIVE_CARD_STATUSES = ['scheduled', 'waiting', 'live'];
 
 const DOCUMENT_MIME_BY_EXT = {
@@ -274,6 +300,7 @@ const DOCUMENT_MIME_BY_EXT = {
 
 exports.getSchedule = async (req, res, next) => {
   try {
+    await ensureRecordingSchema();
     await processTimedOutConferences();
     const range = SCHEDULE_RANGES[req.query.range] ? req.query.range : 'today';
     let query = `${conferenceScheduleBase} WHERE (${SCHEDULE_RANGES[range]})
@@ -294,13 +321,14 @@ exports.getSchedule = async (req, res, next) => {
 exports.getDocuments = async (req, res, next) => {
   try {
     await backfillMissingDocuments(req);
-    const { search, page = 1, limit = 10 } = req.query;
+    const { search, date, date_scope, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
     let where = 'WHERE 1=1';
     const params = [];
 
     where = await applyRoleFilter(req, where, params);
+    where = applyScheduledDateFilter(where, params, { date, date_scope });
     where += ` AND d.file_type = 'pdf'
       AND d.id = (
         SELECT MAX(d2.id)
@@ -459,7 +487,7 @@ const EXPORT_COLUMNS = [
 
 exports.exportReport = async (req, res, next) => {
   try {
-    const { format = 'csv', status, start_date, end_date, search } = req.query;
+    const { format = 'csv', status, start_date, end_date, search, patient_id, patient } = req.query;
 
     let query = `${conferenceSelectBase} WHERE 1=1`;
     const params = [];
@@ -469,9 +497,29 @@ exports.exportReport = async (req, res, next) => {
     if (status) { query += ' AND c.status = ?'; params.push(status); }
     if (start_date) { query += ' AND c.scheduled_date >= ?'; params.push(start_date); }
     if (end_date) { query += ' AND c.scheduled_date <= ?'; params.push(end_date); }
-    if (search) {
-      query += ` AND (c.conference_code LIKE ? OR CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+    if (patient_id) {
+      const patientId = parseInt(patient_id, 10);
+      if (!Number.isNaN(patientId)) {
+        query += ' AND c.patient_id = ?';
+        params.push(patientId);
+      }
+    }
+    const patientQuery = String(patient || (!patient_id ? search : '') || '').trim();
+    if (patientQuery && !patient_id) {
+      const term = `%${patientQuery}%`;
+      const exactId = parseInt(patientQuery, 10);
+      const idMatch = !Number.isNaN(exactId) && String(exactId) === patientQuery;
+      query += ` AND (
+        CONCAT(pat.first_name, ' ', pat.last_name) LIKE ?
+        OR pat.first_name LIKE ?
+        OR pat.last_name LIKE ?
+        OR pat.patient_code LIKE ?
+        OR CAST(pat.id AS CHAR) LIKE ?
+        OR c.conference_code LIKE ?
+        ${idMatch ? 'OR c.patient_id = ?' : ''}
+      )`;
+      params.push(term, term, term, term, term, term);
+      if (idMatch) params.push(exactId);
     }
 
     query += ' ORDER BY c.scheduled_date DESC, c.scheduled_time DESC';
@@ -487,12 +535,15 @@ exports.exportReport = async (req, res, next) => {
     const range = start_date || end_date
       ? `${start_date || 'Earliest'} to ${end_date || 'Latest'}`
       : 'All dates';
+    const patientLabel = patient_id
+      ? (formatted[0]?.patient_name || `Patient ${patient_id}`)
+      : (patientQuery || 'All patients');
 
     const { buffer, mimeType, fileName } = await buildExport(format, {
       columns: EXPORT_COLUMNS,
       rows: formatted,
       title: 'Conference Meetings Report',
-      subtitle: `${range} • ${formatted.length} record(s) • Generated ${new Date().toLocaleString()}`,
+      subtitle: `${range} • ${patientLabel} • ${formatted.length} record(s) • Generated ${new Date().toLocaleString()}`,
       fileName: `conference-report-${new Date().toISOString().slice(0, 10)}`,
     });
 
@@ -500,7 +551,7 @@ exports.exportReport = async (req, res, next) => {
       userId: req.user.id,
       action: 'export',
       entityType: 'conference',
-      details: { format, status: status || 'all', start_date, end_date, count: formatted.length },
+      details: { format, status: status || 'all', start_date, end_date, patient_id: patient_id || 'all', patient: patientQuery || undefined, count: formatted.length },
       ipAddress: req.ip,
     });
 
@@ -523,6 +574,82 @@ exports.getById = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
     res.json({ success: true, data: conference });
+  } catch (err) { next(err); }
+};
+
+exports.getClinicalContext = async (req, res, next) => {
+  try {
+    const conference = await getConferenceById(req.params.id);
+    if (!conference) {
+      return res.status(404).json({ success: false, message: 'Conference not found' });
+    }
+
+    let patientPreviousRecords = '';
+    let internalNotes = '';
+    let conferenceNote = '';
+    let files = [];
+
+    if (conference.appointment_id) {
+      const [apptRows] = await pool.execute(
+        `SELECT patient_previous_records, notes, important_note
+         FROM appointments WHERE id = ?`,
+        [conference.appointment_id]
+      );
+      const appointment = apptRows[0] || {};
+      patientPreviousRecords = appointment.patient_previous_records || '';
+      internalNotes = appointment.notes || '';
+      conferenceNote = appointment.important_note || '';
+
+      const [fileRows] = await pool.execute(
+        `SELECT id, original_name, file_size, mime_type, created_at
+         FROM appointment_files WHERE appointment_id = ? ORDER BY id`,
+        [conference.appointment_id]
+      );
+      files = fileRows;
+    }
+
+    const [patientRows] = await pool.execute(
+      'SELECT medical_history FROM patients WHERE id = ?',
+      [conference.patient_id]
+    );
+
+    const [previousRows] = await pool.execute(
+      `SELECT d.id AS file_id, d.original_name, d.file_size,
+              c.id AS conference_id, c.conference_code,
+              DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS scheduled_date
+       FROM conference_generated_documents d
+       JOIN conferences c ON c.id = d.conference_id
+       WHERE c.patient_id = ? AND c.id <> ? AND d.file_type = 'pdf'
+         AND d.id = (
+           SELECT MAX(d2.id)
+           FROM conference_generated_documents d2
+           WHERE d2.conference_id = d.conference_id AND d2.file_type = 'pdf'
+         )
+       ORDER BY c.scheduled_date DESC, d.id DESC
+       LIMIT 20`,
+      [conference.patient_id, conference.id]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        patient_previous_records: patientPreviousRecords,
+        medical_history: patientRows[0]?.medical_history || '',
+        internal_notes: internalNotes,
+        conference_note: conferenceNote,
+        conference_notes: conference.notes || '',
+        files,
+        previous_records: previousRows.map((row) => {
+          let documentCode = `DOC-${row.file_id}`;
+          try {
+            documentCode = formatDocumentCode(row.file_id);
+          } catch {
+            /* keep fallback */
+          }
+          return { ...row, document_code: documentCode };
+        }),
+      },
+    });
   } catch (err) { next(err); }
 };
 
@@ -557,14 +684,17 @@ exports.create = async (req, res, next) => {
         'INSERT INTO conference_participants (conference_id, user_id, role_in_conference) VALUES (?, ?, ?)',
         [result.insertId, p.userId, p.role]
       );
-      await conn.execute(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-        [p.userId, 'Conference Created', `You are invited to conference ${conferenceCode}`, 'conference']
-      );
+      await createNotification({
+        userId: p.userId,
+        title: 'Conference Created',
+        message: `You are invited to conference ${conferenceCode}`,
+        type: 'conference',
+      }, conn);
     }
 
     await conn.commit();
     res.status(201).json({ success: true, message: 'Conference created', data: { id: result.insertId, conference_code: conferenceCode } });
+    emitScheduleChanged({ type: 'conference-created', conferenceId: result.insertId });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -584,10 +714,11 @@ exports.update = async (req, res, next) => {
     if (!updates.length) return res.status(400).json({ success: false, message: 'No fields to update' });
 
     if (req.body.status === 'live') {
-      await pool.execute(
-        'INSERT INTO notifications (user_id, title, message, type) SELECT user_id, ?, ?, ? FROM conference_participants WHERE conference_id = ?',
-        ['Conference Started', 'A conference has started', 'conference', req.params.id]
-      );
+      await notifyConferenceParticipants(req.params.id, {
+        title: 'Conference Started',
+        message: 'A conference has started',
+        type: 'conference',
+      });
     }
 
     values.push(req.params.id);
@@ -602,6 +733,7 @@ exports.update = async (req, res, next) => {
     }
 
     res.json({ success: true, message: 'Conference updated' });
+    emitScheduleChanged({ type: 'conference-updated', conferenceId: Number(req.params.id) });
   } catch (err) { next(err); }
 };
 
@@ -618,7 +750,11 @@ exports.accept = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'This conference is no longer available' });
     }
     if (['waiting', 'live'].includes(conference.status)) {
-      return res.json({ success: true, message: 'Meeting already opened', data: { status: conference.status } });
+      return res.json({
+        success: true,
+        message: 'Meeting already opened',
+        data: { status: conference.status, record_meeting: wantsRecording(conference) },
+      });
     }
 
     const leadMinutes = await getNumericSetting('conference_open_lead_minutes');
@@ -636,23 +772,33 @@ exports.accept = async (req, res, next) => {
 
     await ensureReportRows(conference.id);
 
-    await pool.execute(
-      `INSERT INTO notifications (user_id, title, message, type)
-       SELECT user_id, ?, ?, ? FROM conference_participants
-       WHERE conference_id = ?`,
-      [
-        'Meeting Open',
-        `${req.user.role === 'admin' ? 'An administrator' : 'Reception'} has opened conference ${conference.conference_code}. You can now join.`,
-        'conference',
-        conference.id,
-      ]
-    );
+    await notifyConferenceParticipants(conference.id, {
+      title: 'Meeting Open',
+      message: `${req.user.role === 'admin' ? 'An administrator' : 'Reception'} has opened conference ${conference.conference_code}. You can now join.`,
+      type: 'conference',
+    });
+
+    if (wantsRecording(conference)) {
+      try {
+        await startRecording(conference.id);
+      } catch (err) {
+        console.error('[recording]', err.message);
+        return res.status(500).json({
+          success: false,
+          message: 'Meeting could not start recording. Check recording storage and try again.',
+        });
+      }
+    }
 
     res.json({
       success: true,
-      message: 'Meeting opened — GP, AHP, and guests can now join',
-      data: { status: 'waiting' },
+      message: wantsRecording(conference)
+        ? 'Meeting opened and recording started'
+        : 'Meeting opened — GP, AHP, and guests can now join',
+      data: { status: 'waiting', record_meeting: wantsRecording(conference) },
     });
+    emitScheduleChanged({ type: 'meeting-opened', conferenceId: conference.id });
+    scheduleEmptyCheck(conference.id).catch((err) => console.error('[empty-meeting]', err.message));
   } catch (err) { next(err); }
 };
 
@@ -662,17 +808,26 @@ exports.join = async (req, res, next) => {
     if (!conference) {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
+    if (conference.status === 'completed' || conference.status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'This conference has ended' });
+    }
+
+    const isHost = MEETING_HOST_ROLES.includes(req.user.role);
+    if (isHost) {
+      return res.status(403).json({
+        success: false,
+        message: 'Reception opens and ends meetings. Only GP, AHP, and guests join the video room.',
+      });
+    }
     if (!['gp', 'ahp', 'conference_guest'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Only clinical staff can join meetings' });
     }
 
-    const assigned = await isAssignedParticipant(conference, req.user);
-    if (!assigned) {
-      return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
-    }
-
-    if (conference.status === 'completed' || conference.status === 'cancelled') {
-      return res.status(400).json({ success: false, message: 'This conference has ended' });
+    if (!isHost) {
+      const assigned = await isAssignedParticipant(conference, req.user);
+      if (!assigned) {
+        return res.status(403).json({ success: false, message: 'You are not assigned to this conference' });
+      }
     }
 
     if (!['waiting', 'live'].includes(conference.status)) {
@@ -682,7 +837,9 @@ exports.join = async (req, res, next) => {
       });
     }
 
-    const room = await videoService.ensureRoom(conference.conference_code);
+    const room = await videoService.ensureRoom(conference.conference_code, {
+      recordMeeting: wantsRecording(conference),
+    });
     const iceServers = videoService.getIceServers();
     const [profile] = await pool.execute(
       'SELECT first_name, last_name FROM user_profiles WHERE user_id = ?',
@@ -701,12 +858,22 @@ exports.join = async (req, res, next) => {
 
     await ensureReportRows(conference.id);
 
-    await pool.execute(
-      'UPDATE conference_participants SET joined_at = COALESCE(joined_at, NOW()) WHERE conference_id = ? AND user_id = ?',
-      [conference.id, req.user.id]
-    );
-
-    await startSession(conference.id, req.user.id);
+    if (!isHost) {
+      await pool.execute(
+        'UPDATE conference_participants SET joined_at = COALESCE(joined_at, NOW()) WHERE conference_id = ? AND user_id = ?',
+        [conference.id, req.user.id]
+      );
+      await startSession(conference.id, req.user.id);
+    }
+    markOccupied(conference.id);
+    emitScheduleChanged({ type: 'meeting-joined', conferenceId: conference.id });
+    if (wantsRecording(conference)) {
+      try {
+        await startRecording(conference.id);
+      } catch (err) {
+        console.error('[recording]', err.message);
+      }
+    }
 
     res.json({
       success: true,
@@ -718,11 +885,13 @@ exports.join = async (req, res, next) => {
         iceServers: room.provider === 'jitsi' ? [] : iceServers,
         displayName,
         patientName: conference.patient_name || '',
+        recordMeeting: wantsRecording(conference),
         conference: {
           id: conference.id,
           status: 'live',
           conference_code: conference.conference_code,
           patient_name: conference.patient_name || '',
+          record_meeting: wantsRecording(conference),
         },
       },
     });
@@ -735,17 +904,21 @@ exports.leave = async (req, res, next) => {
     if (!conference) {
       return res.status(404).json({ success: false, message: 'Conference not found' });
     }
-    if (!['gp', 'ahp', 'conference_guest'].includes(req.user.role)) {
+    const isHost = MEETING_HOST_ROLES.includes(req.user.role);
+    if (!isHost && !['gp', 'ahp', 'conference_guest'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Only meeting participants can leave' });
     }
 
-    await endSession(conference.id, req.user.id);
-    await pool.execute(
-      'UPDATE conference_participants SET left_at = NOW() WHERE conference_id = ? AND user_id = ?',
-      [conference.id, req.user.id]
-    );
+    if (!isHost) {
+      await endSession(conference.id, req.user.id);
+      await pool.execute(
+        'UPDATE conference_participants SET left_at = NOW() WHERE conference_id = ? AND user_id = ?',
+        [conference.id, req.user.id]
+      );
+    }
 
     res.json({ success: true, message: 'Left meeting — join time recorded' });
+    scheduleEmptyCheck(conference.id).catch((err) => console.error('[empty-meeting]', err.message));
   } catch (err) { next(err); }
 };
 
@@ -769,6 +942,8 @@ exports.getParticipants = async (req, res, next) => {
         scheduled_date: conference.scheduled_date,
         started_time: conference.started_time,
         ended_time: conference.ended_time,
+        accepted_at: conference.accepted_at,
+        ended_at: conference.ended_at,
         status: conference.status,
         ...overview,
       },
@@ -796,6 +971,10 @@ exports.getAttendance = async (req, res, next) => {
         patient_name: conference.patient_name,
         scheduled_date: conference.scheduled_date,
         scheduled_time: conference.scheduled_time,
+        started_time: conference.started_time,
+        ended_time: conference.ended_time,
+        accepted_at: conference.accepted_at,
+        ended_at: conference.ended_at,
         status: conference.status,
       },
     });
@@ -829,6 +1008,11 @@ exports.end = async (req, res, next) => {
       });
     }
 
+    if (wantsRecording(conference)) {
+      emitRecordingFlush(conference.id);
+      await waitForRecordingData(conference.id).catch((err) => console.error('[recording]', err.message));
+    }
+
     await pool.execute(
       `UPDATE conferences SET status = 'completed', ended_at = NOW(), room_id = NULL WHERE id = ?`,
       [conference.id]
@@ -840,6 +1024,8 @@ exports.end = async (req, res, next) => {
       [conference.id]
     );
 
+    await finalizeRecording(conference.id).catch((err) => console.error('[recording]', err.message));
+
     await lockReportsAfterMeeting(conference.id);
 
     try {
@@ -848,16 +1034,34 @@ exports.end = async (req, res, next) => {
       console.error('Document generation failed:', docErr.message);
     }
 
-    await pool.execute(
-      `INSERT INTO notifications (user_id, title, message, type)
-       SELECT user_id, ?, ?, ? FROM conference_participants
-       WHERE conference_id = ?`,
-      ['Conference Ended', `Meeting ${conference.conference_code} ended — clinical documents are ready`, 'conference', conference.id]
-    );
+    await notifyConferenceParticipants(conference.id, {
+      title: 'Conference Ended',
+      message: `Meeting ${conference.conference_code} ended — clinical documents are ready`,
+      type: 'conference',
+    });
 
     emitConferenceEnded(conference.id);
+    cancelEmptyWatch(conference.id);
 
     res.json({ success: true, message: 'Meeting ended and documents generated' });
+  } catch (err) { next(err); }
+};
+
+exports.continueEmpty = async (req, res, next) => {
+  try {
+    const conference = await getConferenceById(req.params.id);
+    if (!conference) {
+      return res.status(404).json({ success: false, message: 'Conference not found' });
+    }
+    if (!MEETING_HOST_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only reception or an administrator can continue this meeting' });
+    }
+    if (!['waiting', 'live'].includes(conference.status)) {
+      return res.status(400).json({ success: false, message: 'This meeting is not open' });
+    }
+
+    await continueEmptyMeeting(conference.id);
+    res.json({ success: true, message: 'Meeting kept open — you will be asked again if it stays empty' });
   } catch (err) { next(err); }
 };
 
@@ -906,12 +1110,13 @@ exports.exportJoinTimeReport = async (req, res, next) => {
     if (gp_id) filterParts.push(`GP ID: ${gp_id}`);
     if (ahp_id) filterParts.push(`AHP ID: ${ahp_id}`);
 
+    const timezone = (await getStringSetting('timezone', 'Asia/Colombo')) || 'Asia/Colombo';
     const exportRows = report.rows.map((row) => ({
       patient_name: row.patient_name,
       conference_code: row.conference_code,
       meeting_date: row.meeting_date,
-      started_at: row.started_at ? new Date(row.started_at).toLocaleString() : '—',
-      ended_at: row.ended_at ? new Date(row.ended_at).toLocaleString() : '—',
+      started_at: formatStoredTime(row.started_at || row.started_time, timezone),
+      ended_at: formatStoredTime(row.ended_at || row.ended_time, timezone),
       duration_label: row.duration_label,
     }));
 
@@ -947,5 +1152,6 @@ exports.remove = async (req, res, next) => {
   try {
     await pool.execute('DELETE FROM conferences WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Conference deleted' });
+    emitScheduleChanged({ type: 'conference-deleted', conferenceId: Number(req.params.id) });
   } catch (err) { next(err); }
 };

@@ -11,10 +11,11 @@ import { toast } from 'react-toastify';
 import { useCountdown, getMeetingDateTime } from '../hooks/useCountdown';
 import useConferenceOpenLeadMinutes from '../hooks/useConferenceOpenLeadMinutes';
 import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
-import { ROLES, STATUS_COLORS } from '../utils/constants';
+import { ROLES, STATUS_COLORS, canJoinVideoRoom, isMeetingHostRole } from '../utils/constants';
 import { formatClockTime } from '../utils/dateTime';
 import api from '../services/api';
 import { ConferenceGuestButton } from './ConferenceGuestDialog';
+import { useOptionalConferenceSession } from '../context/ConferenceSessionContext';
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
@@ -59,6 +60,7 @@ const ConferenceMeetingCard = ({
 }) => {
   const navigate = useNavigate();
   const theme = useTheme();
+  const sessionCtx = useOptionalConferenceSession();
   const countdown = useCountdown(conference.scheduled_date, conference.scheduled_time);
   const openLeadMinutes = useConferenceOpenLeadMinutes();
   const { can } = useReceptionistPermissions();
@@ -68,7 +70,7 @@ const ConferenceMeetingCard = ({
   const isAhp = userRole === ROLES.AHP;
   const isGuest = userRole === ROLES.CONFERENCE_GUEST;
   // Admins supervise reception, so they get the same open/end control.
-  const isMeetingHost = [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(userRole);
+  const isMeetingHost = isMeetingHostRole(userRole);
   const isParticipant = isGp || isAhp || isGuest;
   const isAccepted = ['waiting', 'live'].includes(conference.status);
   const isLive = conference.status === 'live';
@@ -78,7 +80,7 @@ const ConferenceMeetingCard = ({
   const canAccept = isPendingOpen && withinAcceptWindow;
   const acceptTooEarly = isPendingOpen && !withinAcceptWindow;
   const canEnd = isMeetingHost && isAccepted && !isCompleted && canEndMeetings;
-  const canJoin = isParticipant && isAccepted && !isCompleted;
+  const canJoin = canJoinVideoRoom(userRole) && isAccepted && !isCompleted;
   const waitingForReception = isParticipant && conference.status === 'scheduled' && !isCompleted;
 
   const tier = useMemo(
@@ -105,9 +107,12 @@ const ConferenceMeetingCard = ({
   const handleAccept = async () => {
     setAccepting(conference.id);
     try {
-      await api.post(`/conferences/${conference.id}/accept`);
-      toast.success('Meeting opened — GP, AHP, and guests can now join');
+      const { data } = await api.post(`/conferences/${conference.id}/accept`);
+      const shouldRecord = Boolean(data.data?.record_meeting || conference.record_meeting);
       onRefresh?.();
+      toast.success(shouldRecord
+        ? 'Meeting opened — recording starts when participants join'
+        : 'Meeting opened — GP, AHP, and guests can now join');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to open meeting');
     } finally {
@@ -118,6 +123,13 @@ const ConferenceMeetingCard = ({
   const endMeeting = async (force = false) => {
     setEnding?.(conference.id);
     try {
+      const isActiveSession = sessionCtx?.session
+        && String(sessionCtx.session.conferenceId) === String(conference.id);
+      if (isActiveSession) {
+        await sessionCtx.endSession({ force });
+        onRefresh?.();
+        return;
+      }
       await api.post(`/conferences/${conference.id}/end`, force ? { force: true } : {});
       toast.success('Meeting ended — documents are being generated');
       onRefresh?.();

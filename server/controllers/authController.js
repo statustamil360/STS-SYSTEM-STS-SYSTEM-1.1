@@ -3,6 +3,7 @@ const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/token');
 const { createAuditLog } = require('../middleware/auditLog');
 const { getPermissionsByUserId } = require('../services/receptionistPermissionService');
+const { createNotification } = require('../services/notificationService');
 
 exports.login = async (req, res, next) => {
   try {
@@ -11,7 +12,7 @@ exports.login = async (req, res, next) => {
     const [users] = await pool.execute(
       `SELECT u.*, r.name AS role FROM users u
        JOIN roles r ON u.role_id = r.id WHERE u.email = ?`,
-      [email]
+      [email || null]
     );
 
     if (!users.length) {
@@ -35,7 +36,7 @@ exports.login = async (req, res, next) => {
     if (!valid) {
       await pool.execute(
         'INSERT INTO login_history (user_id, ip_address, user_agent, status) VALUES (?, ?, ?, ?)',
-        [user.id, req.ip, req.headers['user-agent'], 'failed']
+        [user.id, req.ip || null, req.headers['user-agent'] || null, 'failed']
       );
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
@@ -51,7 +52,7 @@ exports.login = async (req, res, next) => {
 
     await pool.execute(
       'INSERT INTO login_history (user_id, ip_address, user_agent, status) VALUES (?, ?, ?, ?)',
-      [user.id, req.ip, req.headers['user-agent'], 'success']
+      [user.id, req.ip || null, req.headers['user-agent'] || null, 'success']
     );
 
     await createAuditLog({
@@ -149,10 +150,12 @@ exports.changePassword = async (req, res, next) => {
     const hash = await hashPassword(newPassword);
     await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
 
-    await pool.execute(
-      'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-      [req.user.id, 'Password Changed', 'Your password was changed successfully.', 'security']
-    );
+    await createNotification({
+      userId: req.user.id,
+      title: 'Password Changed',
+      message: 'Your password was changed successfully.',
+      type: 'security',
+    });
 
     res.json({ success: true, message: 'Password changed successfully' });
   } catch (err) {

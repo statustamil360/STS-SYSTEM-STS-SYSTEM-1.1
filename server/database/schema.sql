@@ -145,6 +145,7 @@ CREATE TABLE conferences (
   status ENUM('scheduled', 'waiting', 'live', 'completed', 'cancelled') DEFAULT 'scheduled',
   meeting_link VARCHAR(500),
   notes TEXT,
+  record_meeting TINYINT(1) NOT NULL DEFAULT 0,
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -152,6 +153,24 @@ CREATE TABLE conferences (
   FOREIGN KEY (gp_id) REFERENCES gps(id) ON DELETE SET NULL,
   FOREIGN KEY (ahp_id) REFERENCES allied_health_professionals(id) ON DELETE SET NULL,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE conference_recordings (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  conference_id INT NOT NULL,
+  status ENUM('requested', 'recording', 'ready', 'failed', 'not_recorded') NOT NULL DEFAULT 'requested',
+  original_name VARCHAR(255),
+  stored_name VARCHAR(255),
+  file_path VARCHAR(500),
+  mime_type VARCHAR(120) DEFAULT 'video/webm',
+  file_size BIGINT DEFAULT 0,
+  duration_seconds INT DEFAULT 0,
+  recorder_user_id INT NULL,
+  started_at TIMESTAMP NULL,
+  ended_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (conference_id) REFERENCES conferences(id) ON DELETE CASCADE
 );
 
 CREATE TABLE conference_participants (
@@ -173,12 +192,12 @@ CREATE TABLE appointments (
   ahp_id INT,
   title VARCHAR(255),
   important_note TEXT,
-  comments TEXT,
   patient_previous_records TEXT,
   appointment_date DATE NOT NULL,
   appointment_time TIME NOT NULL,
   status ENUM('scheduled', 'confirmed', 'completed', 'cancelled', 'no_show') DEFAULT 'scheduled',
   notes TEXT,
+  record_meeting TINYINT(1) NOT NULL DEFAULT 0,
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -265,6 +284,16 @@ CREATE TABLE task_updates (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE user_todos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  is_completed TINYINT(1) DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE notifications (
   id INT PRIMARY KEY AUTO_INCREMENT,
   user_id INT NOT NULL,
@@ -347,6 +376,7 @@ CREATE INDEX idx_patients_status ON patients(status);
 CREATE INDEX idx_conferences_date ON conferences(scheduled_date);
 CREATE INDEX idx_conferences_status ON conferences(status);
 CREATE INDEX idx_tasks_assigned ON tasks(assigned_to);
+CREATE INDEX idx_user_todos_user ON user_todos(user_id, is_completed, created_at);
 CREATE INDEX idx_notifications_user ON notifications(user_id, is_read);
 CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);

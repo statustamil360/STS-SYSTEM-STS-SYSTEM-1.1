@@ -3,11 +3,10 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField,
   Grid, Box, Typography, Divider, Stack, Alert,
 } from '@mui/material';
-import { AdminPanelSettings, LockReset } from '@mui/icons-material';
+import { AdminPanelSettings } from '@mui/icons-material';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import { toast } from 'react-toastify';
-import PageHeader from '../../components/PageHeader';
 import DataTable from '../../components/DataTable';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import api from '../../services/api';
@@ -17,9 +16,15 @@ import { handleFormDialogClose } from '../../components/PremiumFormFields';
 import PasswordTextField from '../../components/PasswordReveal';
 import AccountStatusToggle from '../../components/AccountStatusToggle';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
+import useSystemDateTime from '../../hooks/useSystemDateTime';
 
 const AdminManagement = () => {
+  const { formatDate, formatDateTime } = useSystemDateTime();
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [lastLoginFilter, setLastLoginFilter] = useState('');
+  const [createdFrom, setCreatedFrom] = useState('');
+  const [createdTo, setCreatedTo] = useState('');
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -39,9 +44,19 @@ const AdminManagement = () => {
   });
 
   const fetchAdmins = useCallback(async ({ page: pageNum, limit }) => {
-    const { data } = await api.get('/admins', { params: { search, page: pageNum, limit } });
+    const { data } = await api.get('/admins', {
+      params: {
+        search,
+        page: pageNum,
+        limit,
+        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(lastLoginFilter ? { last_login: lastLoginFilter } : {}),
+        ...(createdFrom ? { created_from: createdFrom } : {}),
+        ...(createdTo ? { created_to: createdTo } : {}),
+      },
+    });
     return { rows: data.data ?? [], total: data.pagination?.total ?? 0 };
-  }, [search]);
+  }, [search, statusFilter, lastLoginFilter, createdFrom, createdTo]);
 
   const {
     rows, loading, loadingMore, total, page, setPage, rowsPerPage, setRowsPerPage, reload, error,
@@ -74,7 +89,7 @@ const AdminManagement = () => {
   const onSubmit = async (formData) => {
     setSubmitting(true);
     try {
-      const { newPassword, confirmNewPassword, ...payload } = formData;
+      const { newPassword, confirmNewPassword: _confirmNewPassword, ...payload } = formData;
       delete payload.confirmPassword;
 
       if (editRow) {
@@ -148,19 +163,53 @@ const AdminManagement = () => {
     { field: 'admin_code', headerName: 'Admin ID' },
     { field: 'first_name', headerName: 'Name', render: (r) => `${r.first_name || ''} ${r.last_name || ''}`.trim() || '—' },
     { field: 'email', headerName: 'Email' },
-    { field: 'phone', headerName: 'Phone', render: (r) => r.phone || '—' },
+    { field: 'created_at', headerName: 'Created Date', render: (r) => formatDate(r.created_at) },
+    { field: 'last_login', headerName: 'Last Login', render: (r) => (r.last_login ? formatDateTime(r.last_login) : 'Never') },
     { field: 'status', headerName: 'Status', type: 'status' },
+  ];
+
+  const adminFilters = [
+    {
+      key: 'status',
+      label: 'Status',
+      value: statusFilter,
+      onChange: (v) => { setStatusFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All Statuses' },
+        { value: 'active', label: 'Active' },
+        { value: 'inactive', label: 'Inactive' },
+        { value: 'disabled', label: 'Disabled' },
+      ],
+    },
+    {
+      key: 'last_login',
+      label: 'Login',
+      value: lastLoginFilter,
+      onChange: (v) => { setLastLoginFilter(v); setPage(0); },
+      options: [
+        { value: '', label: 'All Logins' },
+        { value: 'logged_in', label: 'Has Logged In' },
+        { value: 'never', label: 'Never Logged In' },
+      ],
+    },
+    {
+      key: 'created_from',
+      label: 'Created From',
+      type: 'date',
+      value: createdFrom,
+      onChange: (v) => { setCreatedFrom(v); setPage(0); },
+    },
+    {
+      key: 'created_to',
+      label: 'Created To',
+      type: 'date',
+      value: createdTo,
+      onChange: (v) => { setCreatedTo(v); setPage(0); },
+    },
   ];
 
   return (
     <>
-      <PageHeader
-        title="Admin Management"
-        subtitle="Create admin accounts with a login password. Admins sign in on the same login page as all other roles."
-        actionLabel="Add Admin"
-        onAction={() => handleOpen()}
-      />
-
       <DataTable
         title="Administrators"
         columns={columns}
@@ -173,7 +222,10 @@ const AdminManagement = () => {
         onPageChange={setPage}
         onRowsPerPageChange={(v) => { setRowsPerPage(v); setPage(0); }}
         onSearch={(v) => { setSearch(v); setPage(0); }}
-        searchPlaceholder="Search by name or email..."
+        searchPlaceholder="Search by name, email, or admin ID..."
+        filters={adminFilters}
+        actionLabel="Add Admin"
+        onAction={() => handleOpen()}
         onEdit={handleOpen}
         onDelete={handleDeleteRequest}
         onResetPassword={openResetDialog}

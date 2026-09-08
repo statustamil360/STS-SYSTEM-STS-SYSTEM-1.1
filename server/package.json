@@ -16,6 +16,8 @@
     "migrate:receptionist-permissions": "node database/migrate-receptionist-permissions.js",
     "migrate:appointment-gps": "node database/migrate-appointment-gps.js",
     "migrate:task-files": "node database/migrate-task-files.js",
+    "migrate:appointment-comments": "node database/migrate-appointment-comments.js",
+    "migrate:admin-ids": "node database/migrate-admin-ids.js",
     "seed:demo-meetings": "node database/seed-demo-meetings.js"
   },
   "keywords": [],
@@ -33,15 +35,14 @@
     "express-rate-limit": "^8.6.1",
     "express-validator": "^7.3.2",
     "helmet": "^8.3.0",
-    "html-to-docx": "^1.8.0",
     "jsonwebtoken": "^9.0.3",
+    "mediasoup": "^3.15.2",
     "morgan": "^1.11.0",
     "multer": "^2.2.0",
-    "mediasoup": "^3.15.2",
     "mysql2": "^3.23.2",
+    "nodemailer": "^10.0.0",
     "pdfkit": "^0.19.1",
-    "socket.io": "^4.8.3",
-    "uuid": "^14.0.1"
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

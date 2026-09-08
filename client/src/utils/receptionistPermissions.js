@@ -1,6 +1,7 @@
 /**
  * Mirrors server/services/receptionistPermissionService.js.
- * An absent key counts as granted so existing accounts keep their access.
+ * An absent key counts as granted so existing accounts keep their access,
+ * except conference_record which is opt-in (off until an admin enables it).
  */
 export const RECEPTIONIST_PERMISSION_GROUPS = [
   {
@@ -21,6 +22,7 @@ export const RECEPTIONIST_PERMISSION_GROUPS = [
       { key: 'documents_view', label: 'View documents' },
       { key: 'documents_download', label: 'Download documents' },
       { key: 'reports_export', label: 'Export meeting reports' },
+      { key: 'conference_record', label: 'Allow record meeting' },
     ],
   },
   {
@@ -80,13 +82,16 @@ export const RECEPTIONIST_PERMISSION_KEYS = [
 ];
 
 export const DEFAULT_RECEPTIONIST_PERMISSIONS = Object.fromEntries(
-  RECEPTIONIST_PERMISSION_KEYS.map((key) => [key, true]),
+  RECEPTIONIST_PERMISSION_KEYS.map((key) => [key, key !== 'conference_record']),
 );
 
 export const normalizeReceptionistPermissions = (raw) => {
   const source = raw && typeof raw === 'object' ? raw : {};
   return Object.fromEntries(
-    RECEPTIONIST_PERMISSION_KEYS.map((key) => [key, source[key] !== false]),
+    RECEPTIONIST_PERMISSION_KEYS.map((key) => [
+      key,
+      key in source ? source[key] !== false : key !== 'conference_record',
+    ]),
   );
 };
 

@@ -12,7 +12,7 @@ import {
   WcOutlined, ContactEmergencyOutlined, AddOutlined, DeleteOutlined,
   VerifiedUserOutlined, CheckCircleOutlined, CancelOutlined, EditOutlined,
   VideoCallOutlined, CallEndOutlined, VisibilityOutlined, DownloadOutlined, AssessmentOutlined,
-  TaskAltOutlined,
+  TaskAltOutlined, VideocamOutlined,
 } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
@@ -32,7 +32,7 @@ import useSystemDateTime from '../../hooks/useSystemDateTime';
 import useRolePermissions from '../../hooks/useRolePermissions';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
-import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, formatWeekdayShort, ROLES } from '../../utils/constants';
+import { WEEKDAYS, parseWeekdays, formatWeekdays, formatWeekdayInitials, ROLES } from '../../utils/constants';
 import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
 import {
   staffCreateSchema, staffEditSchema, staffPasswordResetSchema,
@@ -63,6 +63,7 @@ const PERMISSION_ICONS = {
   ahps_delete: DeleteOutlined,
   conference_open: VideoCallOutlined,
   conference_end: CallEndOutlined,
+  conference_record: VideocamOutlined,
   documents_view: VisibilityOutlined,
   documents_download: DownloadOutlined,
   reports_export: AssessmentOutlined,
@@ -71,6 +72,7 @@ const PERMISSION_ICONS = {
 const CONFERENCE_PERMISSION_KEYS = [
   'conference_open',
   'conference_end',
+  'conference_record',
   'documents_view',
   'documents_download',
   'reports_export',
@@ -162,7 +164,7 @@ const ConferencePermissionIcons = ({ permissions }) => {
           key={key}
           permissionKey={key}
           label={label}
-          allowed={flags[key] !== false}
+          allowed={flags[key] === true}
         />
       ))}
     </Stack>
@@ -760,7 +762,7 @@ const ReceptionistPermissionFields = ({ value, onToggle }) => (
 
 const createStaffPage = ({
   title,
-  subtitle,
+  subtitle: _subtitle,
   endpoint,
   codeField,
   codeLabel = 'ID',
@@ -772,8 +774,8 @@ const createStaffPage = ({
   deleteConfirmTitle,
   deleteConfirmMessage,
   deleteConfirmLabel,
-  createSchema = staffCreateSchema,
-  editSchema = staffEditSchema,
+  createSchema: _createSchema = staffCreateSchema,
+  editSchema: _editSchema = staffEditSchema,
   createSuccessMessage,
   enablePasswordReset = false,
   enableView = false,

@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { createAuditLog } = require('../middleware/auditLog');
 const { clearPermissionCache } = require('../middleware/receptionistPermission');
 const { NUMERIC_SETTINGS, coerceNumericSetting } = require('../services/settingsService');
+const { emitSettingsChanged } = require('../services/socketService');
 
 const NUMERIC_SETTING_KEYS = Object.keys(NUMERIC_SETTINGS);
 
@@ -26,6 +27,11 @@ const BOOLEAN_SETTING_KEYS = [
   'ahp_dark_mode_allowed',
   'gp_can_download_documents',
   'ahp_can_download_documents',
+  'notify_appointment_assigned',
+  'notify_appointment_cancelled',
+  'notify_appointment_weekly',
+  'notify_appointment_monthly',
+  'notify_conference_history_monthly',
 ];
 
 const SUPER_ADMIN_ONLY_KEYS = ['email_settings', 'sms_settings', 'whatsapp_settings'];
@@ -144,6 +150,12 @@ exports.getAll = async (req, res, next) => {
       ahp_dark_mode_allowed: true,
       gp_can_download_documents: false,
       ahp_can_download_documents: false,
+      notify_appointment_assigned: true,
+      notify_appointment_cancelled: true,
+      notify_appointment_weekly: true,
+      notify_appointment_monthly: true,
+      notify_conference_history_monthly: true,
+      notification_email: '',
       ...NUMERIC_SETTING_DEFAULTS,
       ...GATEWAY_DEFAULTS,
     };
@@ -175,6 +187,8 @@ exports.update = async (req, res, next) => {
       let val;
       if (NUMERIC_SETTING_KEYS.includes(key)) {
         val = String(coerceNumericSetting(key, value));
+      } else if (BOOLEAN_SETTING_KEYS.includes(key)) {
+        val = toBoolean(value, false) ? 'true' : 'false';
       } else if (typeof value === 'object') {
         val = JSON.stringify(value);
       } else {
@@ -189,6 +203,7 @@ exports.update = async (req, res, next) => {
     }
     clearPermissionCache();
     await createAuditLog({ userId: req.user.id, action: 'settings_change', ipAddress: req.ip });
+    emitSettingsChanged({ keys: Object.keys(req.body || {}) });
     res.json({ success: true, message: 'Settings updated' });
   } catch (err) { next(err); }
 };

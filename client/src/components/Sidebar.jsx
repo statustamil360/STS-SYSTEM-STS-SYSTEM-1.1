@@ -6,7 +6,7 @@ import {
   Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
   Settings, Notifications, Security, SupportAgent, LocalHospital,
   MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
-  Description, Person, Tune, ExpandLess, ExpandMore, Shield, AccessTime,
+  Description, Person, Tune, ExpandLess, ExpandMore, AccessTime, Videocam,
 } from '@mui/icons-material';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -16,7 +16,7 @@ import { alpha } from '@mui/material/styles';
 import { MENU_CONFIG } from '../utils/menuConfig';
 import useReceptionistPermissions from '../hooks/useReceptionistPermissions';
 import { getReceptionistPageKeyForPath } from '../utils/receptionistPermissions';
-import { ROLES } from '../utils/constants';
+import { APP_LOGO_SRC, APP_NAME, ROLES } from '../utils/constants';
 import { DRAWER_WIDTH } from '../utils/layout';
 import api from '../services/api';
 
@@ -24,7 +24,7 @@ const ICON_MAP = {
   Dashboard, People, AdminPanelSettings, Speed, Assessment, History,
   Settings, Notifications, Security, SupportAgent, LocalHospital,
   MedicalServices, HealthAndSafety, VideoCall, TaskAlt, Event, NoteAlt,
-  Description, Person, Tune, AccessTime,
+  Description, Person, Tune, AccessTime, Videocam,
 };
 
 const BRAND_GRADIENT = 'linear-gradient(135deg, #0D9488 0%, #14B8A6 100%)';
@@ -283,20 +283,20 @@ const Sidebar = ({ mobileOpen, onClose }) => {
         }}
       >
         <Box
+          component="img"
+          src={APP_LOGO_SRC}
+          alt={APP_NAME}
           sx={{
-            width: 38,
-            height: 38,
-            borderRadius: 2.5,
-            display: 'grid',
-            placeItems: 'center',
+            width: 40,
+            height: 40,
+            borderRadius: 1.5,
             flexShrink: 0,
-            background: BRAND_GRADIENT,
-            boxShadow: '0 6px 16px rgba(13, 148, 136, 0.35)',
-            color: '#FFFFFF',
+            objectFit: 'cover',
+            boxShadow: isSuperAdmin
+              ? '0 0 0 1px rgba(255,255,255,0.12)'
+              : '0 4px 12px rgba(15, 23, 42, 0.12)',
           }}
-        >
-          {isSuperAdmin ? <Shield sx={{ fontSize: 20 }} /> : <LocalHospital sx={{ fontSize: 20 }} />}
-        </Box>
+        />
         <Typography
           noWrap
           sx={{
@@ -307,7 +307,7 @@ const Sidebar = ({ mobileOpen, onClose }) => {
             minWidth: 0,
           }}
         >
-          AMC Teleconference
+          {APP_NAME}
         </Typography>
       </Box>
 

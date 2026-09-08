@@ -3,6 +3,16 @@ export const refreshNotificationBadge = () => {
   window.dispatchEvent(new CustomEvent('notifications:refresh'));
 };
 
-export const refreshInboxTaskBadge = () => {
-  window.dispatchEvent(new CustomEvent('tasks:inbox-refresh'));
+let scheduleRefreshTimer;
+
+/** Live schedule events (appointments, conferences, meetings) — debounced so bursts refetch once. */
+export const refreshSchedule = () => {
+  window.clearTimeout(scheduleRefreshTimer);
+  scheduleRefreshTimer = window.setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('schedule:refresh'));
+  }, 50);
+};
+
+export const refreshSettingsLive = () => {
+  window.dispatchEvent(new CustomEvent('settings:refresh'));
 };

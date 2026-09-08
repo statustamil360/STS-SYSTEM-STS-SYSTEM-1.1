@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { STORAGE_TIMEZONE } = require('../utils/dateTimeDisplay');
 
 let tableReady = false;
 let legacyBackfillDone = false;
@@ -52,21 +53,156 @@ const backfillLegacySessions = async () => {
   );
 };
 
-const sessionDurationSql = `TIMESTAMPDIFF(
+const sessionDurationSql = `GREATEST(0, TIMESTAMPDIFF(
   SECOND,
-  s.joined_at,
-  COALESCE(s.left_at, NOW())
-)`;
+  GREATEST(s.joined_at, COALESCE(c.accepted_at, s.joined_at)),
+  LEAST(
+    COALESCE(s.left_at, COALESCE(c.ended_at, NOW())),
+    COALESCE(c.ended_at, NOW())
+  )
+))`;
 
-/** Close any open session, then start a new one (handles rejoin). */
+const meetingDurationSql = `GREATEST(0, TIMESTAMPDIFF(
+  SECOND,
+  c.accepted_at,
+  COALESCE(c.ended_at, NOW())
+))`;
+
+const wallClockNowMs = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: STORAGE_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const pick = (type) => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(
+    pick('year'),
+    pick('month') - 1,
+    pick('day'),
+    pick('hour'),
+    pick('minute'),
+    pick('second'),
+  );
+};
+
+const MERGE_GAP_MS = 2 * 60 * 1000;
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+const parseSqlMs = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value.getTime();
+  const match = String(value).trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (match) {
+    return Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6] || 0),
+    );
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+};
+
+const formatNaiveFromMs = (ms) => {
+  if (ms == null) return null;
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+};
+
+const formatClockLabel = (value) => {
+  if (!value) return '—';
+  const match = String(value).match(/(\d{1,2}):(\d{2})/);
+  if (!match) return String(value);
+  const hours = Number(match[1]);
+  if (!Number.isInteger(hours) || hours < 0 || hours > 23) return String(value);
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${pad2(hour12)}:${match[2]} ${suffix}`;
+};
+
+const clampMs = (ms, start, end) => {
+  if (ms == null) return null;
+  let next = ms;
+  if (start != null && next < start) next = start;
+  if (end != null && next > end) next = end;
+  return next;
+};
+
+/** Collapse reconnect/overlap rows into presence inside the meeting window. */
+const mergeParticipantSessions = (rawSessions, meetingStart, meetingEnd) => {
+  const now = wallClockNowMs();
+  const endBound = meetingEnd || now;
+  const intervals = rawSessions
+    .map((session) => {
+      const joined = clampMs(parseSqlMs(session.joined_at), meetingStart, endBound);
+      const left = clampMs(parseSqlMs(session.left_at) || now, meetingStart, endBound);
+      if (joined == null || left == null || left <= joined) return null;
+      return { ...session, joined_ms: joined, left_ms: left };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.joined_ms - b.joined_ms);
+
+  const merged = [];
+  intervals.forEach((interval) => {
+    const last = merged[merged.length - 1];
+    if (last && interval.joined_ms <= last.left_ms + MERGE_GAP_MS) {
+      last.left_ms = Math.max(last.left_ms, interval.left_ms);
+      return;
+    }
+    merged.push({ ...interval });
+  });
+
+  return merged.map((interval) => ({
+    id: interval.id,
+    joined_at: formatNaiveFromMs(interval.joined_ms),
+    left_at: formatNaiveFromMs(interval.left_ms),
+    duration_seconds: Math.max(0, Math.floor((interval.left_ms - interval.joined_ms) / 1000)),
+  }));
+};
+
+const secondsBetween = (start, end) => {
+  const startMs = parseSqlMs(start);
+  const endMs = parseSqlMs(end);
+  if (startMs == null || endMs == null) return 0;
+  return Math.max(0, Math.floor((endMs - startMs) / 1000));
+};
+
+/** Keep one open session per person; reopen a just-ended row on reconnect. */
 const startSession = async (conferenceId, userId, executor = pool) => {
   await ensureSessionsTable();
-  await executor.execute(
-    `UPDATE conference_participant_sessions
-     SET left_at = NOW()
-     WHERE conference_id = ? AND user_id = ? AND left_at IS NULL`,
+  const [openRows] = await executor.execute(
+    `SELECT id FROM conference_participant_sessions
+     WHERE conference_id = ? AND user_id = ? AND left_at IS NULL
+     ORDER BY joined_at DESC LIMIT 1`,
     [conferenceId, userId]
   );
+  if (openRows.length) return openRows[0].id;
+
+  const [recentRows] = await executor.execute(
+    `SELECT id FROM conference_participant_sessions
+     WHERE conference_id = ? AND user_id = ?
+       AND left_at IS NOT NULL
+       AND TIMESTAMPDIFF(SECOND, left_at, NOW()) < 120
+     ORDER BY left_at DESC LIMIT 1`,
+    [conferenceId, userId]
+  );
+  if (recentRows.length) {
+    await executor.execute(
+      'UPDATE conference_participant_sessions SET left_at = NULL WHERE id = ?',
+      [recentRows[0].id]
+    );
+    return recentRows[0].id;
+  }
+
   const [result] = await executor.execute(
     `INSERT INTO conference_participant_sessions (conference_id, user_id, joined_at)
      VALUES (?, ?, NOW())`,
@@ -113,7 +249,9 @@ const endAllSessions = async (conferenceId, executor = pool) => {
 const fetchSessionsForConference = async (conferenceId) => {
   await ensureSessionsTable();
   const [rows] = await pool.execute(
-    `SELECT s.id, s.conference_id, s.user_id, s.joined_at, s.left_at,
+    `SELECT s.id, s.conference_id, s.user_id,
+            DATE_FORMAT(s.joined_at, '%Y-%m-%d %H:%i:%s') AS joined_at,
+            DATE_FORMAT(s.left_at, '%Y-%m-%d %H:%i:%s') AS left_at,
             ${sessionDurationSql} AS duration_seconds,
             cp.role_in_conference,
             COALESCE(
@@ -121,6 +259,7 @@ const fetchSessionsForConference = async (conferenceId) => {
               u.username
             ) AS display_name
      FROM conference_participant_sessions s
+     JOIN conferences c ON c.id = s.conference_id
      JOIN users u ON u.id = s.user_id
      LEFT JOIN user_profiles up ON up.user_id = s.user_id
      LEFT JOIN conference_participants cp
@@ -134,7 +273,21 @@ const fetchSessionsForConference = async (conferenceId) => {
 
 /** Group sessions by participant with totals. */
 const getConferenceAttendance = async (conferenceId) => {
+  const [[conference]] = await pool.execute(
+    `SELECT DATE_FORMAT(accepted_at, '%Y-%m-%d %H:%i:%s') AS accepted_at,
+            DATE_FORMAT(ended_at, '%Y-%m-%d %H:%i:%s') AS ended_at,
+            TIME_FORMAT(accepted_at, '%H:%i:%s') AS started_time,
+            TIME_FORMAT(ended_at, '%H:%i:%s') AS ended_time,
+            ${meetingDurationSql} AS meeting_seconds
+     FROM conferences c
+     WHERE c.id = ?`,
+    [conferenceId]
+  );
+
   const sessions = await fetchSessionsForConference(conferenceId);
+  const meetingStart = parseSqlMs(conference?.accepted_at);
+  const meetingEnd = parseSqlMs(conference?.ended_at);
+  const meetingTotalSeconds = Number(conference?.meeting_seconds) || 0;
   const byUser = new Map();
 
   sessions.forEach((s) => {
@@ -144,29 +297,29 @@ const getConferenceAttendance = async (conferenceId) => {
         user_id: s.user_id,
         display_name: s.display_name,
         role: s.role_in_conference || 'other',
-        total_seconds: 0,
-        sessions: [],
+        raw: [],
       });
     }
-    const entry = byUser.get(key);
-    const duration = Number(s.duration_seconds) || 0;
-    entry.total_seconds += duration;
-    entry.sessions.push({
-      id: s.id,
-      joined_at: s.joined_at,
-      left_at: s.left_at,
-      duration_seconds: duration,
-    });
+    byUser.get(key).raw.push(s);
   });
 
-  const participants = [...byUser.values()].sort(
-    (a, b) => b.total_seconds - a.total_seconds
-  );
+  const participants = [...byUser.values()].map((entry) => {
+    const merged = mergeParticipantSessions(entry.raw, meetingStart, meetingEnd);
+    return {
+      user_id: entry.user_id,
+      display_name: entry.display_name,
+      role: entry.role,
+      total_seconds: merged.reduce((sum, session) => sum + session.duration_seconds, 0),
+      sessions: merged,
+    };
+  }).sort((a, b) => b.total_seconds - a.total_seconds);
 
   return {
     conference_id: Number(conferenceId),
     participants,
-    meeting_total_seconds: participants.reduce((sum, p) => sum + p.total_seconds, 0),
+    meeting_total_seconds: meetingTotalSeconds,
+    started_time: conference?.started_time || null,
+    ended_time: conference?.ended_time || null,
   };
 };
 
@@ -207,11 +360,15 @@ const getConferenceParticipantOverview = async (conferenceId) => {
 /** Salary summary for admin / receptionist dashboard (current calendar month). */
 const getMonthlyJoinSummary = async () => {
   await ensureSessionsTable();
-  const [roleTotals] = await pool.execute(
-    `SELECT cp.role_in_conference AS role,
-            SUM(${sessionDurationSql}) AS total_seconds,
-            COUNT(DISTINCT s.conference_id) AS conference_count,
-            COUNT(DISTINCT s.user_id) AS participant_count
+  const [sessionRows] = await pool.execute(
+    `SELECT s.conference_id,
+            s.user_id,
+            DATE_FORMAT(s.joined_at, '%Y-%m-%d %H:%i:%s') AS joined_at,
+            DATE_FORMAT(s.left_at, '%Y-%m-%d %H:%i:%s') AS left_at,
+            DATE_FORMAT(c.accepted_at, '%Y-%m-%d %H:%i:%s') AS accepted_at,
+            DATE_FORMAT(c.ended_at, '%Y-%m-%d %H:%i:%s') AS ended_at,
+            ${meetingDurationSql} AS meeting_seconds,
+            cp.role_in_conference AS role
      FROM conference_participant_sessions s
      JOIN conferences c ON c.id = s.conference_id
      LEFT JOIN conference_participants cp
@@ -219,8 +376,7 @@ const getMonthlyJoinSummary = async () => {
      WHERE c.status IN ('completed', 'cancelled', 'live')
        AND YEAR(c.scheduled_date) = YEAR(CURDATE())
        AND MONTH(c.scheduled_date) = MONTH(CURDATE())
-     GROUP BY cp.role_in_conference
-     ORDER BY total_seconds DESC`
+     ORDER BY s.conference_id, s.user_id, s.joined_at`
   );
 
   const [recentConferences] = await pool.execute(
@@ -228,32 +384,77 @@ const getMonthlyJoinSummary = async () => {
             DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS scheduled_date,
             TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS scheduled_time,
             CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
-            SUM(${sessionDurationSql}) AS total_seconds
+            ${meetingDurationSql} AS total_seconds
      FROM conferences c
      JOIN patients pat ON pat.id = c.patient_id
-     LEFT JOIN conference_participant_sessions s ON s.conference_id = c.id
      WHERE c.status IN ('completed', 'cancelled', 'live')
+       AND c.accepted_at IS NOT NULL
        AND YEAR(c.scheduled_date) = YEAR(CURDATE())
        AND MONTH(c.scheduled_date) = MONTH(CURDATE())
-     GROUP BY c.id, c.conference_code, c.scheduled_date, c.scheduled_time, patient_name
      ORDER BY c.scheduled_date DESC, c.scheduled_time DESC
      LIMIT 8`
   );
 
-  const monthTotal = roleTotals.reduce(
-    (sum, r) => sum + (Number(r.total_seconds) || 0),
-    0
+  const [[monthRow]] = await pool.execute(
+    `SELECT COALESCE(SUM(${meetingDurationSql}), 0) AS month_total
+     FROM conferences c
+     WHERE c.status IN ('completed', 'cancelled', 'live')
+       AND c.accepted_at IS NOT NULL
+       AND YEAR(c.scheduled_date) = YEAR(CURDATE())
+       AND MONTH(c.scheduled_date) = MONTH(CURDATE())`
   );
+
+  const byRole = new Map();
+  const byConferenceUser = new Map();
+  sessionRows.forEach((row) => {
+    const key = `${row.conference_id}:${row.user_id}`;
+    if (!byConferenceUser.has(key)) {
+      byConferenceUser.set(key, {
+        conference_id: row.conference_id,
+        user_id: row.user_id,
+        role: row.role || 'other',
+        accepted_at: row.accepted_at,
+        ended_at: row.ended_at,
+        raw: [],
+      });
+    }
+    byConferenceUser.get(key).raw.push(row);
+  });
+
+  byConferenceUser.forEach((entry) => {
+    const merged = mergeParticipantSessions(
+      entry.raw,
+      parseSqlMs(entry.accepted_at),
+      parseSqlMs(entry.ended_at),
+    );
+    const total = merged.reduce((sum, session) => sum + session.duration_seconds, 0);
+    const current = byRole.get(entry.role) || {
+      role: entry.role,
+      total_seconds: 0,
+      conference_ids: new Set(),
+      user_ids: new Set(),
+    };
+    current.total_seconds += total;
+    current.conference_ids.add(String(entry.conference_id));
+    current.user_ids.add(String(entry.user_id));
+    byRole.set(entry.role, current);
+  });
+
+  const roleTotals = [...byRole.values()]
+    .map((r) => ({
+      role: r.role,
+      total_seconds: r.total_seconds,
+      conference_count: r.conference_ids.size,
+      participant_count: r.user_ids.size,
+    }))
+    .sort((a, b) => b.total_seconds - a.total_seconds);
+
+  const monthTotal = Number(monthRow?.month_total) || 0;
 
   return {
     month_label: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
     month_total_seconds: monthTotal,
-    by_role: roleTotals.map((r) => ({
-      role: r.role || 'other',
-      total_seconds: Number(r.total_seconds) || 0,
-      conference_count: Number(r.conference_count) || 0,
-      participant_count: Number(r.participant_count) || 0,
-    })),
+    by_role: roleTotals,
     recent_conferences: recentConferences.map((r) => ({
       ...r,
       total_seconds: Number(r.total_seconds) || 0,
@@ -297,8 +498,11 @@ const getJoinTimeReport = async (filters = {}) => {
            c.conference_code,
            DATE_FORMAT(c.scheduled_date, '%Y-%m-%d') AS meeting_date,
            TIME_FORMAT(c.scheduled_time, '%H:%i:%s') AS meeting_time,
-           c.accepted_at,
-           c.ended_at,
+           DATE_FORMAT(c.accepted_at, '%Y-%m-%d %H:%i:%s') AS accepted_at,
+           DATE_FORMAT(c.ended_at, '%Y-%m-%d %H:%i:%s') AS ended_at,
+           TIME_FORMAT(c.accepted_at, '%H:%i:%s') AS started_time,
+           TIME_FORMAT(c.ended_at, '%H:%i:%s') AS ended_time,
+           ${meetingDurationSql} AS meeting_seconds,
            pat.id AS patient_id,
            CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
            s.user_id AS participant_user_id,
@@ -307,9 +511,8 @@ const getJoinTimeReport = async (filters = {}) => {
              u.username
            ) AS participant_name,
            COALESCE(g.guest_role, cp.role_in_conference) AS participant_role,
-           s.joined_at,
-           s.left_at,
-           ${sessionDurationSql} AS duration_seconds
+           DATE_FORMAT(s.joined_at, '%Y-%m-%d %H:%i:%s') AS joined_at,
+           DATE_FORMAT(s.left_at, '%Y-%m-%d %H:%i:%s') AS left_at
     FROM conference_participant_sessions s
     JOIN conferences c ON c.id = s.conference_id
     JOIN patients pat ON pat.id = c.patient_id
@@ -359,7 +562,6 @@ const getJoinTimeReport = async (filters = {}) => {
 
   const conferences = new Map();
   rows.forEach((row) => {
-    const duration = Number(row.duration_seconds) || 0;
     let conference = conferences.get(row.conference_id);
     if (!conference) {
       conference = {
@@ -371,6 +573,9 @@ const getJoinTimeReport = async (filters = {}) => {
         patient_name: row.patient_name,
         accepted_at: row.accepted_at,
         ended_at: row.ended_at,
+        started_time: row.started_time,
+        ended_time: row.ended_time,
+        meeting_seconds: Number(row.meeting_seconds) || 0,
         first_joined_at: row.joined_at,
         last_left_at: row.left_at,
         participants: new Map(),
@@ -378,10 +583,14 @@ const getJoinTimeReport = async (filters = {}) => {
       conferences.set(row.conference_id, conference);
     }
 
-    if (row.joined_at && (!conference.first_joined_at || new Date(row.joined_at) < new Date(conference.first_joined_at))) {
+    const joinedMs = parseSqlMs(row.joined_at);
+    const leftMs = parseSqlMs(row.left_at);
+    const firstMs = parseSqlMs(conference.first_joined_at);
+    const lastMs = parseSqlMs(conference.last_left_at);
+    if (joinedMs != null && (firstMs == null || joinedMs < firstMs)) {
       conference.first_joined_at = row.joined_at;
     }
-    if (row.left_at && (!conference.last_left_at || new Date(row.left_at) > new Date(conference.last_left_at))) {
+    if (leftMs != null && (lastMs == null || leftMs > lastMs)) {
       conference.last_left_at = row.left_at;
     }
 
@@ -391,27 +600,31 @@ const getJoinTimeReport = async (filters = {}) => {
         participant_user_id: row.participant_user_id,
         participant_name: row.participant_name,
         participant_role: row.participant_role || 'other',
-        duration_seconds: duration,
+        raw: [row],
       });
       return;
     }
-    participant.duration_seconds += duration;
+    participant.raw.push(row);
   });
-
-  const secondsBetween = (start, end) => {
-    if (!start || !end) return 0;
-    return Math.max(0, Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000));
-  };
 
   const formattedRows = [...conferences.values()].map((conference) => {
     const startedAt = conference.accepted_at || conference.first_joined_at;
     const endedAt = conference.ended_at || conference.last_left_at;
-    const durationSeconds = secondsBetween(startedAt, endedAt || new Date());
+    const durationSeconds = Number(conference.meeting_seconds) || secondsBetween(startedAt, endedAt);
+    const meetingStart = parseSqlMs(conference.accepted_at);
+    const meetingEnd = parseSqlMs(conference.ended_at);
     const participants = [...conference.participants.values()]
-      .map((participant) => ({
-        ...participant,
-        duration_label: formatDurationLabel(participant.duration_seconds),
-      }))
+      .map((participant) => {
+        const merged = mergeParticipantSessions(participant.raw, meetingStart, meetingEnd);
+        const duration = merged.reduce((sum, session) => sum + session.duration_seconds, 0);
+        return {
+          participant_user_id: participant.participant_user_id,
+          participant_name: participant.participant_name,
+          participant_role: participant.participant_role,
+          duration_seconds: duration,
+          duration_label: formatDurationLabel(duration),
+        };
+      })
       .sort((a, b) => b.duration_seconds - a.duration_seconds);
 
     return {
@@ -424,6 +637,8 @@ const getJoinTimeReport = async (filters = {}) => {
       patient_name: conference.patient_name,
       started_at: startedAt,
       ended_at: endedAt,
+      started_time: conference.started_time,
+      ended_time: conference.ended_time,
       duration_seconds: durationSeconds,
       duration_label: formatDurationLabel(durationSeconds),
       participant_count: participants.length,
@@ -465,4 +680,5 @@ module.exports = {
   getMonthlyJoinSummary,
   getJoinTimeReport,
   formatDurationLabel,
+  formatClockLabel,
 };

@@ -32,6 +32,7 @@ const RECEPTIONIST_PERMISSION_KEYS = [
   'documents_view',
   'documents_download',
   'reports_export',
+  'conference_record',
 ];
 
 const CACHE_TTL_MS = 15000;
@@ -42,6 +43,8 @@ const toBoolean = (value) => {
   return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
 };
 
+const OPT_IN_PERMISSION_KEYS = new Set(['conference_record']);
+
 const normalizePermissions = (raw) => {
   let parsed = raw;
   if (typeof raw === 'string') {
@@ -50,7 +53,7 @@ const normalizePermissions = (raw) => {
   const source = parsed && typeof parsed === 'object' ? parsed : {};
 
   return RECEPTIONIST_PERMISSION_KEYS.reduce((acc, key) => {
-    acc[key] = key in source ? toBoolean(source[key]) : true;
+    acc[key] = key in source ? toBoolean(source[key]) : !OPT_IN_PERMISSION_KEYS.has(key);
     return acc;
   }, {});
 };
@@ -74,6 +77,7 @@ const getPermissionsByUserId = async (userId) => {
 
 const hasPermission = async (userId, permissionKey) => {
   const permissions = await getPermissionsByUserId(userId);
+  if (OPT_IN_PERMISSION_KEYS.has(permissionKey)) return permissions[permissionKey] === true;
   return permissions[permissionKey] !== false;
 };
 

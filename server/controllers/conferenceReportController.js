@@ -7,6 +7,7 @@ const {
 } = require('../services/clinicalReportService');
 const { emitReportUpdate } = require('../services/socketService');
 const { createAuditLog } = require('../middleware/auditLog');
+const { notifyRoles } = require('../services/notificationService');
 
 exports.getReports = async (req, res, next) => {
   try {
@@ -60,15 +61,11 @@ exports.requestEditAccess = async (req, res, next) => {
       [req.params.id, req.user.id, reason.trim()]
     );
 
-    const [receptionists] = await pool.execute(
-      `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'receptionist' AND u.status = 'active'`
-    );
-    for (const r of receptionists) {
-      await pool.execute(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-        [r.id, 'Report Edit Request', `A participant requested to edit a completed conference report`, 'conference']
-      );
-    }
+    await notifyRoles('receptionist', {
+      title: 'Report Edit Request',
+      message: 'A participant requested to edit a completed conference report',
+      type: 'conference',
+    });
 
     res.json({ success: true, message: 'Edit request submitted to receptionist' });
   } catch (err) { next(err); }

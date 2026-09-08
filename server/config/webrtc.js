@@ -28,12 +28,20 @@ const detectLanIPv4 = () => {
       }
     });
   });
-  if (fromEnv && found.includes(fromEnv)) return fromEnv;
+  // Browsers open https://LAN_IP:5173 — ICE must announce that same address.
+  if (fromEnv) {
+    if (!found.includes(fromEnv)) {
+      console.warn(
+        `[webrtc] LAN_IP=${fromEnv} is not on this PC. Detected: ${found.join(', ') || '(none)'}. Announcing LAN_IP anyway.`
+      );
+    }
+    return fromEnv;
+  }
   const wifi = found.find((ip) => ip.startsWith('192.168.'));
   if (wifi) return wifi;
   const rfc172 = found.find((ip) => /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip));
   if (rfc172) return rfc172;
-  return found[0] || fromEnv || '';
+  return found[0] || '';
 };
 
 const listenIp = process.env.WEBRTC_LISTEN_IP || '0.0.0.0';
@@ -50,8 +58,8 @@ const midPort = Math.floor((minPort + maxPort) / 2);
 const listenInfos = [];
 if (lanIp) {
   listenInfos.push(
-    { protocol: 'udp', ip: lanIp, portRange: { min: minPort, max: midPort } },
-    { protocol: 'tcp', ip: lanIp, portRange: { min: minPort, max: midPort } },
+    { protocol: 'udp', ip: listenIp, announcedAddress: lanIp, portRange: { min: minPort, max: midPort } },
+    { protocol: 'tcp', ip: listenIp, announcedAddress: lanIp, portRange: { min: minPort, max: midPort } },
   );
 }
 if (publicIp && publicIp !== lanIp) {
@@ -68,9 +76,7 @@ if (!listenInfos.length) {
 }
 
 const announcedIp = lanIp || publicIp || listenIp;
-const announcedAddress = !isUnspecifiedIp(announcedIp) && announcedIp !== listenIp
-  ? announcedIp
-  : undefined;
+const announcedAddress = !isUnspecifiedIp(announcedIp) ? announcedIp : undefined;
 
 module.exports = {
   listenIp,

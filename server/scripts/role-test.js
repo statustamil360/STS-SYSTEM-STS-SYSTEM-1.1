@@ -58,7 +58,6 @@ async function main() {
     ['Dashboard', '/dashboard/stats'],
     ['Admins', '/admins'],
     ['Audit Logs', '/audit?page=1&limit=10'],
-    ['Reports', '/reports'],
     ['Settings', '/settings'],
     ['Notifications', '/notifications'],
     ['Profile', '/auth/me'],
@@ -74,12 +73,11 @@ async function main() {
     ['GPs', '/staff/gps'],
     ['AHPs', '/staff/ahps'],
     ['Patients', '/patients'],
-    ['Reports', '/reports'],
-    ['Audit Logs', '/audit?page=1&limit=10'],
     ['Settings', '/settings'],
     ['Notifications', '/notifications'],
   ]);
   await testBlocked('ADMIN', ad.token, '/admins');
+  await testBlocked('ADMIN', ad.token, '/audit?page=1&limit=10');
 
   // Admin create receptionist (safe unique email)
   const ts = Date.now();

@@ -7,6 +7,13 @@ const { corsOrigin } = require('../config/corsOrigins');
 let io = null;
 
 const conferenceRoom = (conferenceId) => `conference:${conferenceId}`;
+const STAFF_HOSTS_ROOM = 'staff:hosts';
+const STAFF_LIVE_ROOM = 'staff:live';
+const userRoom = (userId) => `user:${userId}`;
+const isMeetingHost = (role) => role === 'receptionist' || role === 'admin' || role === 'super_admin';
+const isStaffLiveRole = (role) => (
+  role === 'super_admin' || role === 'admin' || role === 'receptionist' || role === 'gp' || role === 'ahp'
+);
 
 const authenticateSocket = async (token) => {
   const decoded = verifyAccessToken(token);
@@ -43,6 +50,14 @@ const initSocket = (httpServer) => {
 
   io.on('connection', (socket) => {
     registerMediasoupHandlers(io, socket);
+
+    socket.join(userRoom(socket.user.id));
+    if (isStaffLiveRole(socket.user.role)) {
+      socket.join(STAFF_LIVE_ROOM);
+    }
+    if (isMeetingHost(socket.user.role)) {
+      socket.join(STAFF_HOSTS_ROOM);
+    }
 
     socket.on('join-conference', ({ conferenceId }) => {
       if (!conferenceId) return;
@@ -110,9 +125,57 @@ const emitReportUpdate = (conferenceId, report, updatedBy) => {
   io.to(conferenceRoom(conferenceId)).emit('report-updated', { report, updatedBy });
 };
 
-const emitConferenceEnded = (conferenceId) => {
+const emitStaffLive = (event, payload = {}) => {
   if (!io) return;
-  io.to(conferenceRoom(conferenceId)).emit('conference-ended', { conferenceId });
+  io.to(STAFF_LIVE_ROOM).emit(event, payload);
 };
 
-module.exports = { initSocket, getIo, emitReportUpdate, emitConferenceEnded, conferenceRoom };
+const emitScheduleChanged = (payload = {}) => {
+  emitStaffLive('schedule-changed', payload);
+};
+
+const emitSettingsChanged = (payload = {}) => {
+  emitStaffLive('settings-changed', payload);
+};
+
+const emitRecordingFlush = (conferenceId) => {
+  if (!io) return;
+  io.to(conferenceRoom(conferenceId)).emit('recording-flush', { conferenceId });
+};
+
+const emitConferenceEnded = (conferenceId) => {
+  if (!io) return;
+  const payload = { conferenceId };
+  io.to(conferenceRoom(conferenceId)).emit('conference-ended', payload);
+  io.to(STAFF_HOSTS_ROOM).emit('conference-ended', payload);
+  emitScheduleChanged({ type: 'conference-ended', conferenceId });
+};
+
+const emitUserNotification = (userId, payload) => {
+  if (!io || !userId) return;
+  io.to(userRoom(userId)).emit('notification', payload);
+};
+
+const emitToHosts = (event, payload) => {
+  if (!io) return;
+  io.to(STAFF_HOSTS_ROOM).emit(event, payload);
+};
+
+const emitConferenceEmpty = (payload) => emitToHosts('conference-empty', payload);
+const emitConferenceOccupied = (payload) => emitToHosts('conference-occupied', payload);
+const emitConferenceEmptyContinued = (payload) => emitToHosts('conference-empty-continued', payload);
+
+module.exports = {
+  initSocket,
+  getIo,
+  emitReportUpdate,
+  emitConferenceEnded,
+  emitRecordingFlush,
+  emitScheduleChanged,
+  emitSettingsChanged,
+  emitConferenceEmpty,
+  emitConferenceOccupied,
+  emitConferenceEmptyContinued,
+  emitUserNotification,
+  conferenceRoom,
+};

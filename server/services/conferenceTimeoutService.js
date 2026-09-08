@@ -44,6 +44,10 @@ exports.processTimedOutConferences = async (executor = pool) => {
          AND status IN ('scheduled', 'confirmed')`,
       [TIMEOUT_REASON, ...appointmentIds]
     );
+    setImmediate(() => {
+      const { notifyAppointmentsCancelledByIds } = require('./adminNotificationService');
+      notifyAppointmentsCancelledByIds(appointmentIds);
+    });
   }
 
   return timedOut.length;

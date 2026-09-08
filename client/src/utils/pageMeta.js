@@ -8,10 +8,8 @@ const PAGE_META = {
     subtitle: 'Overview of your workspace activity and key metrics',
   },
   '/patients': {
-    title: (role) => (CLINICAL_ROLES.includes(role) ? 'Assigned Patients' : 'Patients'),
-    subtitle: (role) => (CLINICAL_ROLES.includes(role)
-      ? 'View patients assigned to you for clinical care and documentation'
-      : 'Manage patient records for registration, scheduling, and care coordination'),
+    title: 'Patients',
+    subtitle: 'Manage patient records for registration, scheduling, and care coordination',
   },
   '/conferences': {
     title: 'Conferences',
@@ -61,9 +59,9 @@ const PAGE_META = {
     title: 'Settings',
     subtitle: 'Configure system preferences and platform options',
   },
-  '/reports': {
-    title: 'Reports',
-    subtitle: 'View analytics and generate operational reports',
+  '/videos': {
+    title: 'Videos',
+    subtitle: 'Play and download recorded teleconference meetings',
   },
   '/audit-logs': {
     title: 'Audit Logs',
@@ -91,11 +89,11 @@ const PAGE_META = {
   },
   '/medical-notes': {
     title: 'Medical Notes',
-    subtitle: 'Document and review patient clinical notes',
+    subtitle: 'Document clinical notes for patients assigned to you or linked through conferences',
   },
   '/patient-reports': {
     title: 'Patient Reports',
-    subtitle: 'Create and review allied health patient reports',
+    subtitle: 'Record allied health reports for patients assigned to you or linked through conferences',
   },
 };
 
@@ -109,6 +107,10 @@ export const getPageMeta = (pathname, role, search = '') => {
   const query = search.startsWith('?') ? search : search ? `?${search}` : '';
   const keyed = query ? PAGE_META[`${path}${query}`] : null;
   const entry = keyed || PAGE_META[path];
+
+  if (/^\/conferences\/[^/]+\/room$/.test(path)) {
+    return { title: 'Conference Room', subtitle: null };
+  }
 
   if (!entry) {
     return { title: formatPathTitle(path), subtitle: null };

@@ -1,5 +1,16 @@
 const pool = require('../config/db');
 const { allocatePatientCode } = require('../utils/patientId');
+const { notifyRoles } = require('../services/notificationService');
+const {
+  clinicianScope,
+  applyClinicalPatientFilter,
+  clinicalSelectExtras,
+  canAccessClinicalPatient,
+} = require('../utils/clinicalPatientScope');
+
+const denyClinicalAccess = (res) => (
+  res.status(403).json({ success: false, message: 'You do not have access to this patient record' })
+);
 
 exports.getAll = async (req, res, next) => {
   try {
@@ -8,20 +19,23 @@ exports.getAll = async (req, res, next) => {
       sortBy = 'id', sortOrder = 'desc', page = 1, limit = 10,
     } = req.query;
     const offset = (page - 1) * limit;
+    const scope = await clinicianScope(req.user);
+    if (scope?.empty) {
+      return res.json({
+        success: true,
+        data: [],
+        pagination: { total: 0, page: parseInt(page, 10), limit: parseInt(limit, 10) },
+      });
+    }
+
+    const extras = clinicalSelectExtras(scope);
     let query = `SELECT p.*, CONCAT(p.first_name, ' ', p.last_name) AS full_name,
-      gp.gp_code, ahp.ahp_code FROM patients p
+      gp.gp_code, ahp.ahp_code${extras.sql} FROM patients p
       LEFT JOIN gps gp ON p.assigned_gp_id = gp.id
       LEFT JOIN allied_health_professionals ahp ON p.assigned_ahp_id = ahp.id WHERE 1=1`;
-    const params = [];
+    let params = [...extras.params];
 
-    if (req.user.role === 'gp') {
-      const [gpRows] = await pool.execute('SELECT id FROM gps WHERE user_id = ?', [req.user.id]);
-      if (gpRows.length) { query += ' AND p.assigned_gp_id = ?'; params.push(gpRows[0].id); }
-    }
-    if (req.user.role === 'ahp') {
-      const [ahpRows] = await pool.execute('SELECT id FROM allied_health_professionals WHERE user_id = ?', [req.user.id]);
-      if (ahpRows.length) { query += ' AND p.assigned_ahp_id = ?'; params.push(ahpRows[0].id); }
-    }
+    ({ query, params } = applyClinicalPatientFilter(query, params, scope));
 
     if (search) {
       const tokens = String(search).trim().split(/\s+/).filter(Boolean);
@@ -60,10 +74,8 @@ exports.getAll = async (req, res, next) => {
     const orderColumn = sortColumns[sortBy] || 'p.id';
     const orderDirection = sortOrder === 'asc' ? 'ASC' : 'DESC';
 
-    const [countResult] = await pool.execute(
-      query.replace(/SELECT p\.\*.*FROM patients p/s, 'SELECT COUNT(*) as total FROM patients p'),
-      params
-    );
+    const countQuery = query.replace(/SELECT p\.\*[\s\S]*?FROM patients p/, 'SELECT COUNT(*) as total FROM patients p');
+    const [countResult] = await pool.execute(countQuery, params.slice(extras.params.length));
     query += ` ORDER BY ${orderColumn} ${orderDirection} LIMIT ? OFFSET ?`;
     params.push(parseInt(limit, 10), parseInt(offset, 10));
     const [rows] = await pool.execute(query, params);
@@ -74,6 +86,9 @@ exports.getAll = async (req, res, next) => {
 
 exports.getById = async (req, res, next) => {
   try {
+    if (!(await canAccessClinicalPatient(req.user, req.params.id))) {
+      return denyClinicalAccess(res);
+    }
     const [rows] = await pool.execute('SELECT * FROM patients WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Patient not found' });
     res.json({ success: true, data: rows[0] });
@@ -97,10 +112,11 @@ exports.create = async (req, res, next) => {
         n(medical_history), n(emergency_contact), n(insurance), assigned_gp_id || null, assigned_ahp_id || null, req.user.id]
     );
 
-    await pool.execute(
-      'INSERT INTO notifications (user_id, title, message, type) SELECT id, ?, ?, ? FROM users WHERE role_id IN (SELECT id FROM roles WHERE name IN (\'admin\', \'receptionist\'))',
-      ['New Patient', `Patient ${first_name} ${last_name} registered`, 'patient']
-    );
+    await notifyRoles(['admin', 'receptionist'], {
+      title: 'New Patient',
+      message: `Patient ${first_name} ${last_name} registered`,
+      type: 'patient',
+    });
 
     res.status(201).json({ success: true, message: 'Patient created', data: { id: result.insertId, patient_code: patientCode } });
   } catch (err) { next(err); }
@@ -131,6 +147,9 @@ exports.remove = async (req, res, next) => {
 
 exports.getNotes = async (req, res, next) => {
   try {
+    if (!(await canAccessClinicalPatient(req.user, req.params.id))) {
+      return denyClinicalAccess(res);
+    }
     const [rows] = await pool.execute(
       `SELECT pn.*, CONCAT(p.first_name, ' ', p.last_name) AS gp_name
        FROM patient_notes pn LEFT JOIN gps g ON pn.gp_id = g.id
@@ -144,6 +163,9 @@ exports.getNotes = async (req, res, next) => {
 
 exports.addNote = async (req, res, next) => {
   try {
+    if (!(await canAccessClinicalPatient(req.user, req.params.id))) {
+      return denyClinicalAccess(res);
+    }
     const [gpRows] = await pool.execute('SELECT id FROM gps WHERE user_id = ?', [req.user.id]);
     await pool.execute(
       'INSERT INTO patient_notes (patient_id, gp_id, note) VALUES (?, ?, ?)',
@@ -155,6 +177,9 @@ exports.addNote = async (req, res, next) => {
 
 exports.getReports = async (req, res, next) => {
   try {
+    if (!(await canAccessClinicalPatient(req.user, req.params.id))) {
+      return denyClinicalAccess(res);
+    }
     const [rows] = await pool.execute(
       `SELECT pr.*, CONCAT(p.first_name, ' ', p.last_name) AS ahp_name
        FROM patient_reports pr LEFT JOIN allied_health_professionals a ON pr.ahp_id = a.id
@@ -168,6 +193,9 @@ exports.getReports = async (req, res, next) => {
 
 exports.addReport = async (req, res, next) => {
   try {
+    if (!(await canAccessClinicalPatient(req.user, req.params.id))) {
+      return denyClinicalAccess(res);
+    }
     const [ahpRows] = await pool.execute('SELECT id FROM allied_health_professionals WHERE user_id = ?', [req.user.id]);
     await pool.execute(
       'INSERT INTO patient_reports (patient_id, ahp_id, report_content) VALUES (?, ?, ?)',

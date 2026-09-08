@@ -20,10 +20,11 @@ const taskRoutes = require('./routes/taskRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
-const reportRoutes = require('./routes/reportRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const preferencesRoutes = require('./routes/preferencesRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
+const todoRoutes = require('./routes/todoRoutes');
+const recordingRoutes = require('./routes/recordingRoutes');
 
 const app = express();
 
@@ -120,10 +121,11 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/settings', settingsRoutes);
-app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/preferences', preferencesRoutes);
 app.use('/api/performance', performanceRoutes);
+app.use('/api/todos', todoRoutes);
+app.use('/api/recordings', recordingRoutes);
 
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '..', 'client', 'dist');

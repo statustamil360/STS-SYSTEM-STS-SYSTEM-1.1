@@ -1,3 +1,6 @@
+export const APP_NAME = 'AMC Teleconference';
+export const APP_LOGO_SRC = '/logo.png';
+
 export const ROLES = {
   SUPER_ADMIN: 'super_admin',
   ADMIN: 'admin',
@@ -17,6 +20,11 @@ export const ROLE_HOME_PATHS = {
 };
 
 export const getRoleHomePath = (role) => ROLE_HOME_PATHS[role] || '/dashboard';
+
+export const MEETING_HOST_ROLES = [ROLES.RECEPTIONIST, ROLES.ADMIN, ROLES.SUPER_ADMIN];
+export const VIDEO_PARTICIPANT_ROLES = [ROLES.GP, ROLES.AHP, ROLES.CONFERENCE_GUEST];
+export const isMeetingHostRole = (role) => MEETING_HOST_ROLES.includes(role);
+export const canJoinVideoRoom = (role) => VIDEO_PARTICIPANT_ROLES.includes(role);
 
 export const ROLE_LABELS = {
   super_admin: 'Super Admin',
@@ -44,8 +52,6 @@ export const formatWeekdays = (value) => {
   if (Array.isArray(value)) return value.join(', ');
   return value || '';
 };
-
-export const WEEKDAY_SELECT_PLACEHOLDER = 'select week days';
 
 export const formatWeekdayShort = (day) => {
   if (!day) return '';

@@ -1,23 +1,26 @@
 import { useEffect, useState } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, TextField, Grid, MenuItem,
-  Paper, Typography, Stack, Box, Avatar,
+  Dialog, DialogContent, TextField, Paper, Typography, Stack, Box, Avatar, Button, Chip,
 } from '@mui/material';
-import { Description, PersonSearch } from '@mui/icons-material';
+import { alpha } from '@mui/material/styles';
+import { DescriptionOutlined, AddOutlined, EventOutlined, BadgeOutlined } from '@mui/icons-material';
 import { toast } from 'react-toastify';
-import PageHeader from '../../components/PageHeader';
 import FormDialogActions from '../../components/FormDialogActions';
 import api from '../../services/api';
 import useSystemDateTime from '../../hooks/useSystemDateTime';
-import { getFieldPlaceholder, getSelectSlotProps, selectMenuSlotProps } from '../../utils/fieldPlaceholders';
-import { SelectPlaceholderMenuItem, handleFormDialogClose } from '../../components/PremiumFormFields';
+import { getFieldPlaceholder } from '../../utils/fieldPlaceholders';
+import {
+  PremiumDialogHeader, dialogPaperSx, dialogContentSx, multilineFieldSx, handleFormDialogClose,
+} from '../../components/PremiumFormFields';
+import { premiumPaperSx, PremiumPageHeader, emptyStateSx, premiumButtonSx } from '../../components/PremiumPageLayout';
+import ClinicalPatientLookup, { patientDisplayName, patientInitials } from '../../components/ClinicalPatientLookup';
 import PageLoader from '../../components/PageLoader';
 
 const PatientReports = () => {
-  const { formatDateTime } = useSystemDateTime();
+  const { formatDate, formatDateTime } = useSystemDateTime();
   const [patients, setPatients] = useState([]);
   const [loadingPatients, setLoadingPatients] = useState(true);
-  const [selectedPatient, setSelectedPatient] = useState('');
+  const [selectedPatient, setSelectedPatient] = useState(null);
   const [reports, setReports] = useState([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [open, setOpen] = useState(false);
@@ -26,135 +29,210 @@ const PatientReports = () => {
 
   useEffect(() => {
     setLoadingPatients(true);
-    api.get('/patients', { params: { limit: 100 } })
+    api.get('/patients', { params: { limit: 500, sortBy: 'full_name', sortOrder: 'asc' } })
       .then(({ data }) => setPatients(data.data ?? []))
       .catch(() => toast.error('Failed to load patients'))
       .finally(() => setLoadingPatients(false));
   }, []);
 
   useEffect(() => {
-    if (!selectedPatient) {
+    if (!selectedPatient?.id) {
       setReports([]);
       return;
     }
     setLoadingReports(true);
-    api.get(`/patients/${selectedPatient}/reports`)
+    api.get(`/patients/${selectedPatient.id}/reports`)
       .then(({ data }) => setReports(data.data ?? []))
       .catch(() => toast.error('Failed to load patient reports'))
       .finally(() => setLoadingReports(false));
-  }, [selectedPatient]);
+  }, [selectedPatient?.id]);
 
   const handleAddReport = async () => {
+    if (!selectedPatient?.id) {
+      toast.error('Select a patient first');
+      return;
+    }
     if (!content.trim()) {
       toast.error('Please enter report content');
       return;
     }
     setSubmitting(true);
     try {
-      await api.post(`/patients/${selectedPatient}/reports`, { report_content: content });
+      await api.post(`/patients/${selectedPatient.id}/reports`, { report_content: content });
       toast.success('Patient report added successfully');
       setOpen(false);
       setContent('');
-      const { data } = await api.get(`/patients/${selectedPatient}/reports`);
+      const { data } = await api.get(`/patients/${selectedPatient.id}/reports`);
       setReports(data.data ?? []);
-    } catch {
-      toast.error('Failed to add patient report');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to add patient report');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const selectedPatientName = patients.find((p) => String(p.id) === String(selectedPatient));
-
-  if (loadingPatients) {
-    return <PageLoader message="Loading patient reports..." />;
-  }
+  const conferenceCount = Number(selectedPatient?.conference_count) || 0;
 
   return (
-    <>
-      <PageHeader
-        title="Patient Reports"
-        subtitle="Create and review allied health reports for assigned patients"
-        actionLabel="Add Report"
-        onAction={() => selectedPatient && setOpen(true)}
-      />
+    <Stack spacing={2.5}>
+      <Paper elevation={0} sx={premiumPaperSx}>
+        <PremiumPageHeader
+          icon={DescriptionOutlined}
+          title="Patient Reports"
+          subtitle="Look up patients assigned to you or linked through a conference, then record allied health reports"
+          action={(
+            <Button
+              variant="contained"
+              startIcon={<AddOutlined />}
+              onClick={() => {
+                if (!selectedPatient) {
+                  toast.error('Select a patient to add a report');
+                  return;
+                }
+                setOpen(true);
+              }}
+              sx={premiumButtonSx}
+            >
+              Add Report
+            </Button>
+          )}
+        />
+        <Box sx={{ p: { xs: 2, sm: 2.75 } }}>
+          <ClinicalPatientLookup
+            patients={patients}
+            value={selectedPatient}
+            onChange={setSelectedPatient}
+            loading={loadingPatients}
+            formatDate={formatDate}
+          />
 
-      <Paper sx={{ p: 2.5, mb: 3 }}>
-        <Grid container spacing={2} sx={{ alignItems: 'center' }}>
-          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-            <TextField
-              fullWidth
-              select
-              label="Select Patient"
-              value={selectedPatient}
-              onChange={(e) => setSelectedPatient(e.target.value)}
-              disabled={loadingPatients}
-              slotProps={{
-                select: {
-                  ...getSelectSlotProps({
-                    defaultValue: '',
-                    options: patients.map((p) => ({
-                      value: String(p.id),
-                      label: p.full_name || `${p.first_name} ${p.last_name}`,
-                    })),
-                  }),
-                  MenuProps: selectMenuSlotProps,
-                },
+          {selectedPatient && (
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1.5}
+              sx={{
+                mt: 2,
+                p: 1.75,
+                borderRadius: 2.5,
+                border: '1px solid',
+                borderColor: 'divider',
+                bgcolor: (theme) => alpha(theme.palette.secondary.main, 0.04),
+                alignItems: { sm: 'center' },
               }}
             >
-              <SelectPlaceholderMenuItem />
-              {patients.map((p) => (
-                <MenuItem key={p.id} value={String(p.id)}>
-                  {p.full_name || `${p.first_name} ${p.last_name}`}
-                </MenuItem>
-              ))}
-            </TextField>
-          </Grid>
-          {selectedPatientName && (
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-                <Avatar sx={{ bgcolor: 'secondary.main', width: 36, height: 36 }}>
-                  <PersonSearch fontSize="small" />
-                </Avatar>
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                    {selectedPatientName.full_name || `${selectedPatientName.first_name} ${selectedPatientName.last_name}`}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {selectedPatientName.patient_code || 'Assigned patient'}
-                  </Typography>
-                </Box>
+              <Avatar
+                sx={{
+                  width: 48,
+                  height: 48,
+                  fontWeight: 700,
+                  bgcolor: 'secondary.main',
+                  color: 'common.white',
+                }}
+              >
+                {patientInitials(selectedPatient)}
+              </Avatar>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.3 }}>
+                  {patientDisplayName(selectedPatient)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Allied health record for this patient
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                {selectedPatient.patient_code && (
+                  <Chip size="small" icon={<BadgeOutlined />} label={selectedPatient.patient_code} sx={{ fontWeight: 700 }} />
+                )}
+                {conferenceCount > 0 && (
+                  <Chip
+                    size="small"
+                    color="secondary"
+                    variant="outlined"
+                    icon={<EventOutlined />}
+                    label={conferenceCount === 1 ? '1 conference' : `${conferenceCount} conferences`}
+                    sx={{ fontWeight: 700 }}
+                  />
+                )}
+                {selectedPatient.last_conference_date && (
+                  <Chip
+                    size="small"
+                    label={`Last meeting ${formatDate(selectedPatient.last_conference_date)}`}
+                    sx={{ fontWeight: 600 }}
+                  />
+                )}
               </Stack>
-            </Grid>
+            </Stack>
           )}
-        </Grid>
+        </Box>
       </Paper>
 
-      <Paper sx={{ overflow: 'hidden' }}>
-        <Box sx={{ px: 2.5, py: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Report History</Typography>
+      <Paper elevation={0} sx={premiumPaperSx}>
+        <Box
+          sx={{
+            px: { xs: 2, sm: 2.75 },
+            py: 2,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+            Report history
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+            {selectedPatient
+              ? `${reports.length} report${reports.length === 1 ? '' : 's'} on file`
+              : 'Select a patient to review their reports'}
+          </Typography>
         </Box>
+
         {!selectedPatient ? (
-          <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Description sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-            <Typography color="text.secondary" sx={{ fontWeight: 500 }}>Select a patient to view reports</Typography>
+          <Box sx={{ ...emptyStateSx, m: 2.5, minHeight: 240 }}>
+            <DescriptionOutlined sx={{ fontSize: 42, color: 'secondary.main', mb: 1.25, opacity: 0.7 }} />
+            <Typography sx={{ fontWeight: 700 }}>Look up a patient</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 360 }}>
+              Search patients assigned to you or included in your conference meetings.
+            </Typography>
           </Box>
         ) : loadingReports ? (
           <PageLoader message="Loading patient reports..." />
         ) : reports.length === 0 ? (
-          <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography color="text.secondary" sx={{ fontWeight: 500 }}>No patient reports yet</Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-              Add the first report for this patient
+          <Box sx={{ ...emptyStateSx, m: 2.5, minHeight: 240 }}>
+            <Typography sx={{ fontWeight: 700 }}>No patient reports yet</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Add the first allied health report for this patient.
             </Typography>
           </Box>
         ) : (
-          <Stack divider={<Box sx={{ borderBottom: '1px solid', borderColor: 'divider' }} />}>
-            {reports.map((r) => (
-              <Box key={r.id} sx={{ px: 2.5, py: 2 }}>
-                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{r.report_content}</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  {r.ahp_name || 'AHP'} — {formatDateTime(r.created_at)}
+          <Stack spacing={1.5} sx={{ p: { xs: 2, sm: 2.75 } }}>
+            {reports.map((item) => (
+              <Box
+                key={item.id}
+                sx={{
+                  position: 'relative',
+                  pl: 2.25,
+                  pr: 2,
+                  py: 1.75,
+                  borderRadius: 2.5,
+                  border: '1px solid',
+                  borderColor: (theme) => alpha(theme.palette.divider, 0.9),
+                  bgcolor: 'background.paper',
+                  '&::before': {
+                    content: '""',
+                    position: 'absolute',
+                    left: 0,
+                    top: 10,
+                    bottom: 10,
+                    width: 4,
+                    borderRadius: '0 4px 4px 0',
+                    bgcolor: 'secondary.main',
+                  },
+                }}
+              >
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7, fontWeight: 500 }}>
+                  {item.report_content}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.25, fontWeight: 600 }}>
+                  {item.ahp_name || 'AHP'} · {formatDateTime(item.created_at)}
                 </Typography>
               </Box>
             ))}
@@ -162,19 +240,29 @@ const PatientReports = () => {
         )}
       </Paper>
 
-      <Dialog open={open} onClose={handleFormDialogClose(() => setOpen(false), submitting)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={open}
+        onClose={handleFormDialogClose(() => setOpen(false), submitting)}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: dialogPaperSx } }}
+      >
         <form onSubmit={(e) => { e.preventDefault(); handleAddReport(); }}>
-          <DialogTitle>Add Patient Report</DialogTitle>
-          <DialogContent>
+          <PremiumDialogHeader
+            icon={DescriptionOutlined}
+            title="Add patient report"
+            subtitle={selectedPatient ? patientDisplayName(selectedPatient) : 'Allied health report'}
+          />
+          <DialogContent sx={dialogContentSx}>
             <TextField
               fullWidth
               multiline
-              rows={4}
-              label="Report Content"
+              minRows={6}
+              label="Report content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder={getFieldPlaceholder('report_content')}
-              sx={{ mt: 0.5 }}
+              sx={multilineFieldSx}
               required
             />
           </DialogContent>
@@ -185,7 +273,7 @@ const PatientReports = () => {
           />
         </form>
       </Dialog>
-    </>
+    </Stack>
   );
 };
 

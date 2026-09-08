@@ -6,8 +6,8 @@ import { alpha } from '@mui/material/styles';
 import {
   PeopleOutlined, VideoCallOutlined, LocalHospitalOutlined, TaskAltOutlined, EventOutlined,
   MedicalServicesOutlined, HealthAndSafetyOutlined, AdminPanelSettingsOutlined, SpeedOutlined,
-  SecurityOutlined, AssessmentOutlined, SettingsOutlined, ShieldOutlined, ChevronRightOutlined,
-  EventBusyOutlined, VideocamOffOutlined, BoltOutlined,
+  SecurityOutlined, SettingsOutlined, ShieldOutlined, ChevronRightOutlined,
+  EventBusyOutlined, VideocamOffOutlined, BoltOutlined, VideocamOutlined,
   InsertChartOutlined, TrendingUpOutlined, AccessTimeOutlined,
 } from '@mui/icons-material';
 import { useSelector } from 'react-redux';
@@ -25,6 +25,7 @@ import SystemClock from '../components/SystemClock';
 import { usePageRefreshRegister } from '../context/PageRefreshContext';
 import PageLoader from '../components/PageLoader';
 import { isDashboardCardEnabled, STAT_ROW_KEY } from '../utils/dashboardPreferences';
+import useLiveRefresh from '../hooks/useLiveRefresh';
 
 const STAT_CONFIG = {
   [ROLES.SUPER_ADMIN]: [
@@ -51,12 +52,10 @@ const STAT_CONFIG = {
     { key: 'availableAhps', title: 'Available AHPs', icon: HealthAndSafetyOutlined, color: 'success.main' },
   ],
   [ROLES.GP]: [
-    { key: 'assignedPatients', title: 'Assigned Patients', icon: LocalHospitalOutlined, color: 'primary.main' },
     { key: 'todaysConference', title: "Today's Conference", icon: VideoCallOutlined, color: 'secondary.main' },
     { key: 'pendingNotes', title: 'Pending Notes', icon: TaskAltOutlined, color: 'warning.main' },
   ],
   [ROLES.AHP]: [
-    { key: 'assignedPatients', title: 'Assigned Patients', icon: LocalHospitalOutlined, color: 'primary.main' },
     { key: 'upcomingConferences', title: 'Upcoming Conferences', icon: VideoCallOutlined, color: 'secondary.main' },
     { key: 'pendingReports', title: 'Pending Reports', icon: TaskAltOutlined, color: 'warning.main' },
   ],
@@ -66,15 +65,14 @@ const SUPER_ADMIN_ACTIONS = [
   { label: 'Manage Admins', path: '/admins', icon: AdminPanelSettingsOutlined },
   { label: 'Performance', path: '/performance', icon: SpeedOutlined },
   { label: 'Audit Logs', path: '/audit-logs', icon: SecurityOutlined },
-  { label: 'Reports', path: '/reports', icon: AssessmentOutlined },
+  { label: 'Videos', path: '/videos', icon: VideocamOutlined },
   { label: 'Settings', path: '/settings', icon: SettingsOutlined },
 ];
 
 const ADMIN_ACTIONS = [
   { label: 'Manage Receptionists', path: '/receptionists', icon: PeopleOutlined },
   { label: 'Manage Patients', path: '/patients', icon: LocalHospitalOutlined },
-  { label: 'View Reports', path: '/reports', icon: AssessmentOutlined },
-  { label: 'Audit Logs', path: '/audit-logs', icon: SecurityOutlined },
+  { label: 'Videos', path: '/videos', icon: VideocamOutlined },
   { label: 'Settings', path: '/settings', icon: SettingsOutlined },
 ];
 
@@ -96,13 +94,11 @@ const RECEPTIONIST_STAT_PAGE_KEYS = {
 
 const GP_ACTIONS = [
   { label: 'View Conferences', path: '/conferences', icon: VideoCallOutlined },
-  { label: 'Assigned Patients', path: '/patients', icon: LocalHospitalOutlined },
   { label: 'Medical Notes', path: '/medical-notes', icon: TaskAltOutlined },
 ];
 
 const AHP_ACTIONS = [
   { label: 'View Conferences', path: '/conferences', icon: VideoCallOutlined },
-  { label: 'Assigned Patients', path: '/patients', icon: LocalHospitalOutlined },
   { label: 'Patient Reports', path: '/patient-reports', icon: TaskAltOutlined },
 ];
 
@@ -122,8 +118,6 @@ const getStatGridSize = (count) => {
   if (count <= 6) return { xs: 12, sm: 6, md: 4, lg: 2 };
   return { xs: 12, sm: 6, md: 4, lg: 3 };
 };
-
-const formatTime = (value) => (value ? String(value).slice(0, 5) : '—');
 
 const formatStatus = (status) => status?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
 
@@ -313,7 +307,7 @@ const Dashboard = () => {
   const { user } = useSelector((state) => state.auth);
   const dashboardCards = useSelector((state) => state.ui.dashboardCards);
   const cardOn = (key) => isDashboardCardEnabled(dashboardCards, key);
-  const { formatDate, formatDateTime, timezone } = useSystemDateTime();
+  const { formatDate, formatDateTime, formatTime, timezone } = useSystemDateTime();
   const navigate = useNavigate();
   const [stats, setStats] = useState({});
   const [appointments, setAppointments] = useState([]);
@@ -334,9 +328,11 @@ const Dashboard = () => {
   const canSeeConferencesPage = can('conferences_page');
   const canSeeAppointmentsPage = can('appointments_page');
 
-  const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadDashboard = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
     try {
       const isClinical = [ROLES.GP, ROLES.AHP].includes(role);
       const needsTodayMeetings = isClinical || [ROLES.RECEPTIONIST, ROLES.ADMIN].includes(role);
@@ -345,13 +341,14 @@ const Dashboard = () => {
         api.get('/dashboard/stats'),
         api.get('/dashboard/appointments/today'),
         api.get('/dashboard/conferences/recent'),
-        api.get('/dashboard/activity'),
+        ...(isSuperAdmin ? [api.get('/dashboard/activity')] : []),
         ...(needsTodayMeetings ? [api.get('/conferences/schedule?range=today')] : []),
         ...(canViewJoinTime ? [api.get('/dashboard/join-time-summary')] : []),
       ];
       const results = await Promise.all(requests);
-      const [statsRes, apptRes, confRes, actRes] = results;
-      let idx = 4;
+      const [statsRes, apptRes, confRes] = results;
+      let idx = 3;
+      const actRes = isSuperAdmin ? results[idx++] : null;
       const todayConfRes = needsTodayMeetings ? results[idx++] : null;
       const joinTimeRes = canViewJoinTime ? results[idx] : null;
       const appts = apptRes.data.data ?? [];
@@ -359,7 +356,7 @@ const Dashboard = () => {
       setStats(statsRes.data.data ?? {});
       setAppointments(appts);
       setConferences(confs);
-      setActivities(actRes.data.data ?? []);
+      setActivities(actRes?.data?.data ?? []);
       setJoinTimeSummary(canViewJoinTime ? (joinTimeRes?.data?.data ?? null) : null);
 
       if (needsTodayMeetings && todayConfRes) {
@@ -371,17 +368,18 @@ const Dashboard = () => {
       }
       if (!canViewJoinTime) setJoinTimeSummary(null);
     } catch {
-      setError('Failed to load dashboard data. Please refresh the page.');
+      if (!silent) setError('Failed to load dashboard data. Please refresh the page.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [role]);
+  }, [role, isSuperAdmin]);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard, role]);
 
   usePageRefreshRegister(loadDashboard);
+  useLiveRefresh('schedule:refresh', () => loadDashboard({ silent: true }));
 
   useEffect(() => {
     if (!isGp && !isAhp && !isReceptionist && !isAdmin) return undefined;
@@ -423,7 +421,7 @@ const Dashboard = () => {
 
   const chartData = statCards.slice(0, 4).map((s) => ({
     name: s.title.split(' ').slice(-2).join(' '),
-    value: typeof stats[s.key] === 'number' ? stats[s.key] : 0,
+    value: Number(stats[s.key]) || 0,
   }));
 
   const quickActions = isSuperAdmin
@@ -530,7 +528,7 @@ const Dashboard = () => {
                   onRefresh={loadDashboard}
                 />
               )}
-              {(isAdmin || isSuperAdmin) && <SystemClock variant="hero" />}
+              {isSuperAdmin && <SystemClock variant="hero" />}
               {isSuperAdmin && (
                 <Chip
                   label="System operational"
@@ -543,7 +541,7 @@ const Dashboard = () => {
                   }}
                 />
               )}
-              {!loading && statCards[0] && !isGp && !isAhp && (
+              {!loading && statCards[0] && isSuperAdmin && (
                 <Chip
                   label={`${stats[statCards[0].key] ?? 0} ${statCards[0].title.toLowerCase()}`}
                   sx={{

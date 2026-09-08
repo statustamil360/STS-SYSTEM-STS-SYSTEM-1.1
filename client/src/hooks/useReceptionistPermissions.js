@@ -1,5 +1,6 @@
 import { useSelector } from 'react-redux';
 import { ROLES } from '../utils/constants';
+import { normalizeReceptionistPermissions } from '../utils/receptionistPermissions';
 
 /**
  * Reads the per-receptionist permission flags the admin set on the account.
@@ -10,10 +11,11 @@ const useReceptionistPermissions = () => {
   const permissions = useSelector((state) => state.auth.user?.permissions);
 
   const isReceptionist = role === ROLES.RECEPTIONIST;
+  const normalized = isReceptionist ? normalizeReceptionistPermissions(permissions) : null;
 
   const can = (permissionKey) => {
     if (!isReceptionist) return true;
-    return permissions?.[permissionKey] !== false;
+    return normalized[permissionKey] === true;
   };
 
   return { isReceptionist, can };

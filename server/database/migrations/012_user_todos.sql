@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS user_todos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  is_completed TINYINT(1) DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_user_todos_user ON user_todos(user_id, is_completed, created_at);

@@ -1,11 +1,10 @@
 const { ensureConferenceSequence, allocateConferenceCode } = require('../utils/conferenceId');
 const videoService = require('./videoService');
+const { createNotification } = require('./notificationService');
+const { parseBool } = require('./conferenceRecordingService');
 
 const notifyUser = async (conn, userId, title, message) => {
-  await conn.execute(
-    'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-    [userId, title, message, 'conference']
-  );
+  await createNotification({ userId, title, message, type: 'conference' }, conn);
 };
 
 const syncParticipants = async (conn, conferenceId, gpIds, ahpIds, isNew) => {
@@ -71,7 +70,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
   const firstAhpId = ahpIds[0] || appointment.ahp_id || null;
   const notes = [
     appointment.title ? `Title: ${appointment.title}` : null,
-    appointment.important_note ? `Important: ${appointment.important_note}` : null,
+    appointment.important_note ? `Conference notes: ${appointment.important_note}` : null,
     appointment.notes,
   ].filter(Boolean).join('\n') || null;
 
@@ -90,7 +89,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
       `UPDATE conferences SET
         patient_id = ?, gp_id = ?, ahp_id = ?,
         scheduled_date = ?, scheduled_time = ?,
-        notes = ?, status = ?
+        notes = ?, status = ?, record_meeting = ?
        WHERE id = ?`,
       [
         appointment.patient_id,
@@ -100,6 +99,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
         appointment.appointment_time,
         notes,
         preserveStatus,
+        parseBool(appointment.record_meeting) ? 1 : 0,
         conferenceId,
       ]
     );
@@ -115,8 +115,8 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
   const [result] = await conn.execute(
     `INSERT INTO conferences (
       conference_code, appointment_id, patient_id, gp_id, ahp_id,
-      scheduled_date, scheduled_time, status, meeting_link, notes, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      scheduled_date, scheduled_time, status, meeting_link, notes, created_by, record_meeting
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       conferenceCode,
       appointmentId,
@@ -129,6 +129,7 @@ exports.syncConferenceFromAppointment = async (conn, appointmentId, createdByUse
       meetingLink,
       notes,
       createdByUserId,
+      parseBool(appointment.record_meeting) ? 1 : 0,
     ]
   );
 

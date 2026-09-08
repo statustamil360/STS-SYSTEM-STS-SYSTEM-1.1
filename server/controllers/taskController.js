@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const pool = require('../config/db');
 const { uploadDir } = require('../config/jwt');
+const { createNotification } = require('../services/notificationService');
 
 const MIME_BY_EXT = {
   '.pdf': 'application/pdf',
@@ -120,10 +121,12 @@ const notifyAssignerOfAssigneeUpdate = async (task, updaterId, { statusChanged, 
     message = `Task "${task.title}" is now ${statusLabel}`;
   }
 
-  await pool.execute(
-    'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-    [task.assigned_by, title, message, 'task']
-  );
+  await createNotification({
+    userId: task.assigned_by,
+    title,
+    message,
+    type: 'task',
+  });
 };
 
 const resolveFilePath = (filePath) => {
@@ -334,10 +337,12 @@ exports.create = async (req, res, next) => {
     await insertTaskFiles(result.insertId, req.files, req.user.id);
 
     if (!selfAssigned) {
-      await pool.execute(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-        [assigneeId, 'Task Assigned', `New task: ${title}`, 'task']
-      );
+      await createNotification({
+        userId: assigneeId,
+        title: 'Task Assigned',
+        message: `New task: ${title}`,
+        type: 'task',
+      });
     }
 
     res.status(201).json({ success: true, message: 'Task created', data: { id: result.insertId } });
@@ -420,10 +425,12 @@ exports.update = async (req, res, next) => {
         'UPDATE tasks SET assignee_read_at = NULL WHERE id = ?',
         [req.params.id]
       );
-      await pool.execute(
-        'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-        [req.body.assigned_to, 'Task Assigned', `Task reassigned: ${task.title}`, 'task']
-      );
+      await createNotification({
+        userId: req.body.assigned_to,
+        title: 'Task Assigned',
+        message: `Task reassigned: ${task.title}`,
+        type: 'task',
+      });
     }
 
     res.json({ success: true, message: 'Task updated' });

@@ -41,19 +41,19 @@ exports.buildMeetingLink = buildMeetingLink;
 exports.withMeetingLink = withMeetingLink;
 exports.withMeetingLinks = withMeetingLinks;
 
-exports.ensureRoom = async (conferenceCode) => {
+exports.ensureRoom = async (conferenceCode, { recordMeeting = false } = {}) => {
   const roomId = sanitizeRoomName(conferenceCode);
-  if (getProvider() === 'jitsi') {
+  if (recordMeeting || getProvider() === 'webrtc') {
     return {
-      provider: 'jitsi',
+      provider: 'webrtc',
       roomId,
-      jitsiUrl: buildMeetingLink(conferenceCode),
-      jitsiDomain: getJitsiDomain(),
     };
   }
   return {
-    provider: 'webrtc',
+    provider: 'jitsi',
     roomId,
+    jitsiUrl: buildMeetingLink(conferenceCode),
+    jitsiDomain: getJitsiDomain(),
   };
 };
 

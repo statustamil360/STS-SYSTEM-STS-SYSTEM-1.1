@@ -17,7 +17,8 @@ import {
 } from '../../components/PremiumPageLayout';
 import { PremiumDialogHeader, dialogPaperSx, dialogContentSx } from '../../components/PremiumFormFields';
 import api from '../../services/api';
-import { formatCalendarDate, formatTime, formatDuration, formatDateKey } from '../../utils/dateTime';
+import { formatCalendarDate, formatDuration, formatDateKey } from '../../utils/dateTime';
+import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
 import useReceptionistPermissions from '../../hooks/useReceptionistPermissions';
 
@@ -50,6 +51,7 @@ const formatRole = (role) => ROLE_DISPLAY[role]?.label
 const todayIso = () => formatDateKey(new Date()) || new Date().toISOString().slice(0, 10);
 
 const JoinTimeReport = () => {
+  const { formatTime, formatStoredClock } = useSystemDateTime();
   const [filters, setFilters] = useState({
     date: todayIso(),
     patient_id: '',
@@ -190,7 +192,7 @@ const JoinTimeReport = () => {
       headerName: 'Start time',
       render: (r) => (
         <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-          {r.started_at ? formatTime(r.started_at) : '—'}
+          {r.started_at ? formatTime(r.started_at) : formatStoredClock(r.started_time, r.meeting_date)}
         </Typography>
       ),
     },
@@ -199,7 +201,7 @@ const JoinTimeReport = () => {
       headerName: 'End time',
       render: (r) => (
         <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-          {r.ended_at ? formatTime(r.ended_at) : '—'}
+          {r.ended_at ? formatTime(r.ended_at) : formatStoredClock(r.ended_time, r.meeting_date)}
         </Typography>
       ),
     },

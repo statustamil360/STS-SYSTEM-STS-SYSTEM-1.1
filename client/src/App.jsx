@@ -8,9 +8,10 @@ import store from './redux/store';
 import getTheme from './theme';
 import AppRoutes from './routes/AppRoutes';
 import SessionGuard from './components/SessionGuard';
+import { RouteErrorBoundary } from './components/ErrorBoundary';
 import { fetchProfile } from './redux/slices/authSlice';
 import { fetchSystemSettings } from './redux/slices/settingsSlice';
-import { setDarkMode, hydrateCalendarPopup, hydrateDashboardPrefs } from './redux/slices/uiSlice';
+import { setDarkMode, hydrateCalendarPopup, hydrateTodoPopup, hydrateDashboardPrefs } from './redux/slices/uiSlice';
 import { canRoleUseDarkMode } from './hooks/useDarkModeAccess';
 
 const ThemedApp = () => {
@@ -29,8 +30,34 @@ const ThemedApp = () => {
   useEffect(() => {
     if (isAuthenticated && user?.id) {
       dispatch(hydrateCalendarPopup(user.id));
+      dispatch(hydrateTodoPopup(user.id));
       dispatch(hydrateDashboardPrefs(user.id));
     }
+  }, [dispatch, isAuthenticated, user?.id]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const onSettings = () => dispatch(fetchSystemSettings());
+    window.addEventListener('settings:refresh', onSettings);
+    return () => window.removeEventListener('settings:refresh', onSettings);
+  }, [dispatch, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return undefined;
+    const onStorage = (event) => {
+      const key = event.key || '';
+      if (
+        key === `calendar_popup_${user.id}`
+        || key === `todo_popup_${user.id}`
+        || key === `dashboard_prefs_${user.id}`
+      ) {
+        dispatch(hydrateCalendarPopup(user.id));
+        dispatch(hydrateTodoPopup(user.id));
+        dispatch(hydrateDashboardPrefs(user.id));
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, [dispatch, isAuthenticated, user?.id]);
 
   useEffect(() => {
@@ -64,8 +91,10 @@ const ThemedApp = () => {
     <ThemeProvider theme={getTheme(darkMode ? 'dark' : 'light')}>
       <CssBaseline />
       <BrowserRouter>
-        <SessionGuard />
-        <AppRoutes />
+        <RouteErrorBoundary>
+          <SessionGuard />
+          <AppRoutes />
+        </RouteErrorBoundary>
       </BrowserRouter>
       <ToastContainer position="top-right" autoClose={3000} theme={darkMode ? 'dark' : 'light'} />
     </ThemeProvider>

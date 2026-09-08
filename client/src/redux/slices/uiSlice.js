@@ -2,6 +2,7 @@ import { createSlice } from '@reduxjs/toolkit';
 import { readDashboardPrefs, writeDashboardPrefs } from '../../utils/dashboardPreferences';
 
 const calendarPopupKey = (userId) => `calendar_popup_${userId}`;
+const todoPopupKey = (userId) => `todo_popup_${userId}`;
 
 const persistDashboardPrefs = (userId, patch) => {
   if (!userId) return;
@@ -14,6 +15,7 @@ const uiSlice = createSlice({
     sidebarOpen: true,
     darkMode: localStorage.getItem('theme') === 'dark',
     calendarPopupEnabled: true,
+    todoPopupEnabled: true,
     conferencePopupEnabled: true,
     taskAlertsEnabled: true,
     dashboardCards: {},
@@ -39,6 +41,18 @@ const uiSlice = createSlice({
       state.calendarPopupEnabled = Boolean(enabled);
       if (userId) {
         localStorage.setItem(calendarPopupKey(userId), String(Boolean(enabled)));
+      }
+    },
+    hydrateTodoPopup: (state, action) => {
+      const userId = action.payload;
+      const raw = userId ? localStorage.getItem(todoPopupKey(userId)) : null;
+      state.todoPopupEnabled = raw !== 'false';
+    },
+    setTodoPopupEnabled: (state, action) => {
+      const { enabled, userId } = action.payload;
+      state.todoPopupEnabled = Boolean(enabled);
+      if (userId) {
+        localStorage.setItem(todoPopupKey(userId), String(Boolean(enabled)));
       }
     },
     hydrateDashboardPrefs: (state, action) => {
@@ -71,6 +85,7 @@ const uiSlice = createSlice({
 export const {
   toggleSidebar, setSidebarOpen, toggleDarkMode, setDarkMode,
   hydrateCalendarPopup, setCalendarPopupEnabled,
+  hydrateTodoPopup, setTodoPopupEnabled,
   hydrateDashboardPrefs, setConferencePopupEnabled, setTaskAlertsEnabled, setDashboardCardEnabled,
 } = uiSlice.actions;
 export default uiSlice.reducer;

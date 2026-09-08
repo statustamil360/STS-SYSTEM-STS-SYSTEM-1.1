@@ -14,11 +14,12 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { toggleSidebar, toggleDarkMode } from '../redux/slices/uiSlice';
 import { logout } from '../redux/slices/authSlice';
 import api from '../services/api';
-import { ROLE_LABELS, ROLES } from '../utils/constants';
+import { APP_NAME, ROLE_LABELS, ROLES } from '../utils/constants';
 import { getPageMeta } from '../utils/pageMeta';
 import SystemClock from './SystemClock';
 import { usePageRefresh } from '../context/PageRefreshContext';
 import useDarkModeAccess from '../hooks/useDarkModeAccess';
+import { requestDesktopNotificationPermission } from '../utils/desktopNotifications';
 
 const TOOLBAR_HEIGHT = 72;
 
@@ -68,6 +69,11 @@ const Header = ({ onMobileMenuOpen }) => {
 
   const pageMeta = getPageMeta(location.pathname, user?.role, location.search);
   const showSystemClock = [ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user?.role);
+
+  useEffect(() => {
+    document.title = pageMeta.title ? `${pageMeta.title} · ${APP_NAME}` : APP_NAME;
+    return () => { document.title = APP_NAME; };
+  }, [pageMeta.title]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -211,7 +217,13 @@ const Header = ({ onMobileMenuOpen }) => {
           )}
 
           <Tooltip title="Notifications">
-            <IconButton onClick={() => navigate('/notifications')} sx={iconBtnSx}>
+            <IconButton
+              onClick={async () => {
+                await requestDesktopNotificationPermission();
+                navigate('/notifications');
+              }}
+              sx={iconBtnSx}
+            >
               <Badge
                 badgeContent={unreadCount}
                 color="error"

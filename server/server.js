@@ -45,6 +45,18 @@ server.listen(PORT, '0.0.0.0', async () => {
   } catch (err) {
     console.error('[startup] mediasoup init failed:', err.message);
   }
+  try {
+    const { ensureSchema } = require('./services/conferenceRecordingService');
+    await ensureSchema();
+  } catch (err) {
+    console.error('[startup] recording schema failed:', err.message);
+  }
+  try {
+    const { startNotificationScheduler } = require('./services/adminNotificationService');
+    startNotificationScheduler();
+  } catch (err) {
+    console.error('[startup] notification scheduler failed:', err.message);
+  }
 });
 
 process.on('uncaughtException', (err) => {

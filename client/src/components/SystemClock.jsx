@@ -6,7 +6,7 @@ import { useSelector } from 'react-redux';
 import { formatClock } from '../utils/dateTime';
 import { DEFAULT_TIMEZONE, getTimezoneLabel } from '../utils/timezones';
 
-const SystemClock = ({ variant = 'default' }) => {
+const SystemClock = ({ variant = 'default', showZone = true }) => {
   const timezone = useSelector((state) => state.settings.timezone) || DEFAULT_TIMEZONE;
   const [now, setNow] = useState(() => new Date());
 
@@ -71,7 +71,7 @@ const SystemClock = ({ variant = 'default' }) => {
             inset: 0,
             borderRadius: 'inherit',
             pointerEvents: 'none',
-            background: (theme) => `linear-gradient(180deg, ${alpha('#FFFFFF', 0.35)} 0%, transparent 42%)`,
+            background: `linear-gradient(180deg, ${alpha('#FFFFFF', 0.35)} 0%, transparent 42%)`,
           },
         }}
       >
@@ -88,7 +88,7 @@ const SystemClock = ({ variant = 'default' }) => {
             bgcolor: isHero ? alpha('#FFFFFF', 0.14) : (theme) => alpha(theme.palette.primary.main, 0.1),
             border: '1px solid',
             borderColor: isHero ? alpha('#FFFFFF', 0.2) : (theme) => alpha(theme.palette.primary.main, 0.16),
-            boxShadow: (theme) => `inset 0 1px 0 ${alpha('#FFFFFF', 0.45)}`,
+            boxShadow: `inset 0 1px 0 ${alpha('#FFFFFF', 0.45)}`,
           }}
         >
           <AccessTimeOutlined sx={{ fontSize: 17, color: isHero ? 'common.white' : 'primary.main' }} />
@@ -145,6 +145,7 @@ const SystemClock = ({ variant = 'default' }) => {
             )}
           </Stack>
 
+          {showZone && (
           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0 }}>
             <Box
               sx={{
@@ -184,6 +185,7 @@ const SystemClock = ({ variant = 'default' }) => {
               {zone !== offset ? zone : 'System'}
             </Typography>
           </Stack>
+          )}
         </Stack>
       </Box>
     </Tooltip>

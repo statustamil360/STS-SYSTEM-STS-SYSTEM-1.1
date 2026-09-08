@@ -9,10 +9,10 @@ import { alpha } from '@mui/material/styles';
 import {
   EventOutlined, PersonOutlined, CalendarTodayOutlined, AccessTimeOutlined,
   NotesOutlined, InfoOutlined, MedicalServicesOutlined, HealthAndSafetyOutlined,
-  AddOutlined, DeleteOutlined, TitleOutlined, WarningAmberOutlined, CommentOutlined,
+  AddOutlined, DeleteOutlined, TitleOutlined, WarningAmberOutlined,
   DescriptionOutlined, VideoCallOutlined, BadgeOutlined,
-  ScheduleOutlined, FolderOutlined, InsertDriveFileOutlined,
-  CheckCircleOutlined,
+  ScheduleOutlined, InsertDriveFileOutlined,
+  CheckCircleOutlined, CakeOutlined, GroupOutlined, VideocamOutlined, VideocamOffOutlined,
 } from '@mui/icons-material';
 import { useForm, Controller } from 'react-hook-form';
 import { toast } from 'react-toastify';
@@ -25,16 +25,18 @@ import {
 } from '../../components/PremiumFormFields';
 import api from '../../services/api';
 import useRolePermissions from '../../hooks/useRolePermissions';
+import useReceptionistPermissions from '../../hooks/useReceptionistPermissions';
 import { usePageRefreshRegister } from '../../context/PageRefreshContext';
+import useLiveRefresh from '../../hooks/useLiveRefresh';
 import { formatDateInput, formatTimeInput } from '../../utils/crudHelpers';
 import { formatCalendarDate, formatClockTime } from '../../utils/dateTime';
+import useSystemDateTime from '../../hooks/useSystemDateTime';
 import { STATUS_COLORS } from '../../utils/constants';
 import { openAppointmentFilePreview } from '../../utils/filePreview';
 import useProgressiveTable from '../../hooks/useProgressiveTable';
 import FileDropZone from '../../components/FileDropZone';
 
 const APPOINTMENT_STATUS = ['scheduled', 'confirmed', 'cancelled'];
-const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || '';
 
 const CANCEL_REASON_OPTIONS = [
   { key: 'time_over', label: 'Time over the meeting' },
@@ -74,15 +76,31 @@ const defaultFormValues = {
   patient_id: '',
   title: '',
   important_note: '',
-  comments: '',
   appointment_date: '',
   appointment_time: '',
   patient_previous_records: '',
   notes: '',
   status: 'scheduled',
+  record_meeting: false,
 };
 
 const formatLabel = (value) => value?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—';
+
+const calculateAge = (dob) => {
+  if (!dob) return '';
+  const birth = new Date(dob);
+  if (Number.isNaN(birth.getTime())) return '';
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1;
+  return age >= 0 ? String(age) : '';
+};
+
+const patientAgeLabel = (dob) => {
+  const age = calculateAge(dob);
+  return age ? `${age} years` : '—';
+};
 
 const DetailItem = ({ icon: Icon, label, value, span = 6, mono = false }) => (
   <Grid size={{ xs: 12, sm: span }}>
@@ -407,6 +425,9 @@ const Appointments = () => {
   const navigate = useNavigate();
   const highlightHandledRef = useRef(false);
   const { canCreate, canEdit, canDelete } = useRolePermissions('appointments');
+  const { can } = useReceptionistPermissions();
+  const canRecordMeeting = can('conference_record');
+  const { formatDateTime } = useSystemDateTime();
   const [gps, setGps] = useState([]);
   const [ahps, setAhps] = useState([]);
   const [professions, setProfessions] = useState([]);
@@ -484,6 +505,7 @@ const Appointments = () => {
   }, [error]);
 
   usePageRefreshRegister(reload);
+  useLiveRefresh('schedule:refresh', reload);
 
   useEffect(() => {
     const targetId = location.state?.highlightAppointmentId;
@@ -553,12 +575,12 @@ const Appointments = () => {
           patient_id: appt.patient_id != null ? String(appt.patient_id) : '',
           title: appt.title || '',
           important_note: appt.important_note || '',
-          comments: appt.comments || '',
           appointment_date: formatDateInput(appt.appointment_date),
           appointment_time: formatTimeInput(appt.appointment_time),
           patient_previous_records: appt.patient_previous_records || '',
           notes: appt.notes || '',
           status: appt.status || 'scheduled',
+          record_meeting: Boolean(Number(appt.record_meeting)),
         });
         setGpRows(
           appt.gp_ids?.length
@@ -671,13 +693,16 @@ const Appointments = () => {
         gp_ids: gpIds,
         title: formData.title?.trim(),
         important_note: formData.important_note || '',
-        comments: formData.comments || '',
         appointment_date: formData.appointment_date,
         appointment_time: formData.appointment_time,
         patient_previous_records: formData.patient_previous_records || '',
         notes: formData.notes || '',
         ahp_assignments: assignments,
       };
+
+      if (canRecordMeeting) {
+        body.record_meeting = Boolean(formData.record_meeting);
+      }
 
       if (editRow) {
         body.status = formData.status || editRow.status;
@@ -1080,19 +1105,9 @@ const Appointments = () => {
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <IconField
-                  label="Important Note"
+                  label="Conference Note"
                   name="important_note"
-                  icon={WarningAmberOutlined}
-                  register={register}
-                />
-              </Grid>
-              <Grid size={{ xs: 12 }}>
-                <IconField
-                  label="Comments"
-                  name="comments"
-                  multiline
-                  rows={2}
-                  icon={CommentOutlined}
+                  icon={NotesOutlined}
                   register={register}
                 />
               </Grid>
@@ -1124,6 +1139,26 @@ const Appointments = () => {
                   helperText={errors.appointment_time?.message}
                 />
               </Grid>
+              {canRecordMeeting && (
+                <Grid size={{ xs: 12 }}>
+                  <Controller
+                    name="record_meeting"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={(
+                          <Checkbox
+                            checked={Boolean(field.value)}
+                            onChange={(event) => field.onChange(event.target.checked)}
+                          />
+                        )}
+                        label="Record this meeting (full audio and video from start to end)"
+                        sx={{ ml: 0.5, '& .MuiFormControlLabel-label': { fontWeight: 600, fontSize: '0.9rem' } }}
+                      />
+                    )}
+                  />
+                </Grid>
+              )}
             </SectionCard>
 
             <SectionCard title="More Details — Patient Previous Records" icon={DescriptionOutlined}>
@@ -1370,7 +1405,13 @@ const Appointments = () => {
                     hint="Who this appointment is booked for"
                   >
                     <DetailItem icon={PersonOutlined} label="Full Name" value={viewData.patient_name} span={12} />
-                    <DetailItem icon={BadgeOutlined} label="Record ID" value={viewData.patient_code} span={12} mono />
+                    <DetailItem icon={BadgeOutlined} label="Patient ID" value={viewData.patient_code} span={12} mono />
+                    <DetailItem
+                      icon={CakeOutlined}
+                      label="Age"
+                      value={patientAgeLabel(viewData.patient_dob)}
+                      span={12}
+                    />
                   </ViewTopicCard>
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
@@ -1390,6 +1431,12 @@ const Appointments = () => {
                       icon={HealthAndSafetyOutlined}
                       label="Allied Health"
                       value={viewData.ahp_summary}
+                      span={12}
+                    />
+                    <DetailItem
+                      icon={GroupOutlined}
+                      label="Guest names"
+                      value={viewData.guest_summary}
                       span={12}
                     />
                   </ViewTopicCard>
@@ -1426,34 +1473,30 @@ const Appointments = () => {
                       value={formatClockTime(viewData.conference.scheduled_time)}
                     />
                     <DetailItem
-                      icon={PersonOutlined}
-                      label="Participants"
-                      value={viewData.conference.participants || viewData.conference.ahp_name}
-                      span={12}
-                    />
-                    <DetailItem
                       icon={CheckCircleOutlined}
                       label="Opened At"
                       value={viewData.conference.accepted_at
-                        ? new Date(viewData.conference.accepted_at).toLocaleString()
+                        ? formatDateTime(viewData.conference.accepted_at)
                         : 'Not opened by reception yet'}
-                      span={12}
+                    />
+                    <DetailItem
+                      icon={PersonOutlined}
+                      label="Assigned by"
+                      value={viewData.assigned_by_name}
+                    />
+                    <DetailItem
+                      icon={viewData.record_meeting || viewData.conference?.record_meeting ? VideocamOutlined : VideocamOffOutlined}
+                      label="Record meeting"
+                      value={viewData.record_meeting || viewData.conference?.record_meeting ? 'Yes — full audio and video' : 'No'}
                     />
                     {viewData.conference.cancelled_reason && (
                       <NotePanel
                         icon={WarningAmberOutlined}
                         label="Conference Cancelled"
                         value={viewData.conference.cancelled_at
-                          ? `${viewData.conference.cancelled_reason} — ${new Date(viewData.conference.cancelled_at).toLocaleString()}`
+                          ? `${viewData.conference.cancelled_reason} — ${formatDateTime(viewData.conference.cancelled_at)}`
                           : viewData.conference.cancelled_reason}
                         tone="error"
-                      />
-                    )}
-                    {viewData.conference.notes && (
-                      <NotePanel
-                        icon={NotesOutlined}
-                        label="Conference Notes"
-                        value={viewData.conference.notes}
                       />
                     )}
                   </>
@@ -1472,38 +1515,38 @@ const Appointments = () => {
                     tone="error"
                   />
                 )}
-              </ViewTopicCard>
-
-              {(viewData.important_note || viewData.comments || viewData.notes
-                || viewData.patient_previous_records) && (
-                <SectionCard title="Notes & Records" icon={NotesOutlined}>
-                  {viewData.important_note && (
-                    <NotePanel
-                      icon={WarningAmberOutlined}
-                      label="Important Note"
-                      value={viewData.important_note}
-                      tone="warning"
-                    />
-                  )}
-                  {viewData.comments && (
-                    <NotePanel icon={CommentOutlined} label="Comments" value={viewData.comments} />
-                  )}
-                  {viewData.patient_previous_records && (
-                    <NotePanel
-                      icon={DescriptionOutlined}
-                      label="Patient Previous Records"
-                      value={viewData.patient_previous_records}
-                    />
-                  )}
-                  {viewData.notes && (
-                    <NotePanel icon={NotesOutlined} label="Internal Notes" value={viewData.notes} />
-                  )}
-                </SectionCard>
-              )}
-
-              {viewData.files?.length > 0 && (
-                <SectionCard title="Attachments" icon={FolderOutlined}>
+                {String(viewData.important_note || '').trim() && (
+                  <NotePanel
+                    icon={NotesOutlined}
+                    label="Conference Note"
+                    value={viewData.important_note}
+                  />
+                )}
+                {String(viewData.patient_previous_records || '').trim() && (
+                  <NotePanel
+                    icon={DescriptionOutlined}
+                    label="Patient Previous Records"
+                    value={viewData.patient_previous_records}
+                  />
+                )}
+                {String(viewData.notes || '').trim() && (
+                  <NotePanel icon={NotesOutlined} label="Internal Notes" value={viewData.notes} />
+                )}
+                {viewData.files?.length > 0 && (
                   <Grid size={{ xs: 12 }}>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        display: 'block',
+                        mb: 1,
+                        fontWeight: 700,
+                        letterSpacing: '0.05em',
+                        textTransform: 'uppercase',
+                        color: 'text.secondary',
+                      }}
+                    >
+                      Attach Files
+                    </Typography>
                     <Stack spacing={1}>
                       {viewData.files.map((file) => (
                         <Stack
@@ -1540,8 +1583,8 @@ const Appointments = () => {
                       ))}
                     </Stack>
                   </Grid>
-                </SectionCard>
-              )}
+                )}
+              </ViewTopicCard>
             </>
           ) : null}
         </DialogContent>
